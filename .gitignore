@@ -1,0 +1,18 @@
+# Runtime state lives in the OS data dir by default, but a --data-dir of "." is
+# supported for portable installs, so ignore the artefacts here too.
+node_modules/
+halyard.config.json
+token.txt
+push-keys.json
+push-subs.json
+state.json
+*.log
+*.jsonl
+.halyard/
+data/
+artifacts/
+uploads/
+threads/
+*.lock
+.DS_Store
+Thumbs.db

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 430" width="900" height="430" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5eb3ff"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#52d18b"/>
+    </marker>
+    <marker id="aw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#f0b429"/>
+    </marker>
+  </defs>
+
+  <rect width="900" height="430" rx="14" fill="#0e1116"/>
+
+  <!-- ============ phone ============ -->
+  <rect x="28" y="120" width="128" height="190" rx="18" fill="#161b23" stroke="#2a323f"/>
+  <rect x="40" y="136" width="104" height="158" rx="10" fill="#0e1116" stroke="#2a323f"/>
+  <rect x="50" y="148" width="84" height="9" rx="4" fill="#5eb3ff" opacity=".85"/>
+  <rect x="50" y="166" width="66" height="7" rx="3" fill="#3d4a5c"/>
+  <rect x="50" y="180" width="78" height="7" rx="3" fill="#3d4a5c"/>
+  <rect x="50" y="200" width="84" height="30" rx="6" fill="#1d232d" stroke="#2a323f"/>
+  <rect x="58" y="209" width="52" height="6" rx="3" fill="#4a5768"/>
+  <rect x="58" y="220" width="38" height="6" rx="3" fill="#4a5768"/>
+  <rect x="50" y="242" width="84" height="22" rx="6" fill="#5eb3ff"/>
+  <text x="92" y="257" fill="#06121f" font-size="11" font-weight="700" text-anchor="middle">Send</text>
+  <text x="92" y="332" fill="#93a1b3" font-size="13" text-anchor="middle">Your phone</text>
+  <text x="92" y="349" fill="#5b6878" font-size="11" text-anchor="middle">a web page, not an app</text>
+
+  <!-- ============ tunnel ============ -->
+  <rect x="196" y="168" width="112" height="94" rx="12" fill="#161b23" stroke="#2a323f" stroke-dasharray="5 4"/>
+  <text x="252" y="197" fill="#e6edf3" font-size="12.5" font-weight="600" text-anchor="middle">TLS tunnel</text>
+  <text x="252" y="216" fill="#93a1b3" font-size="10.5" text-anchor="middle">Tailscale Serve</text>
+  <text x="252" y="230" fill="#93a1b3" font-size="10.5" text-anchor="middle">cloudflared</text>
+  <text x="252" y="244" fill="#93a1b3" font-size="10.5" text-anchor="middle">ssh -L</text>
+  <text x="252" y="285" fill="#5b6878" font-size="10.5" text-anchor="middle">no open ports</text>
+
+  <!-- ============ your machine ============ -->
+  <rect x="344" y="40" width="524" height="352" rx="16" fill="#12171f" stroke="#2a323f"/>
+  <text x="362" y="66" fill="#93a1b3" font-size="11.5" font-weight="600" letter-spacing=".08em">YOUR MACHINE — 127.0.0.1 ONLY</text>
+
+  <!-- server -->
+  <rect x="366" y="84" width="196" height="126" rx="12" fill="#161b23" stroke="#5eb3ff" stroke-opacity=".45"/>
+  <text x="384" y="108" fill="#e6edf3" font-size="13.5" font-weight="650">halyard server</text>
+  <text x="384" y="128" fill="#93a1b3" font-size="11">node:http · zero deps</text>
+  <line x1="384" y1="139" x2="544" y2="139" stroke="#2a323f"/>
+  <text x="384" y="157" fill="#93a1b3" font-size="11">message queue</text>
+  <text x="384" y="173" fill="#93a1b3" font-size="11">reply ring + archive</text>
+  <text x="384" y="189" fill="#93a1b3" font-size="11">SSE change stream</text>
+  <text x="384" y="203" fill="#5b6878" font-size="10.5">bearer token on every route</text>
+
+  <!-- watcher -->
+  <rect x="366" y="240" width="196" height="126" rx="12" fill="#161b23" stroke="#2a323f"/>
+  <text x="384" y="264" fill="#e6edf3" font-size="13.5" font-weight="650">watcher</text>
+  <text x="384" y="284" fill="#93a1b3" font-size="11">one run at a time (lock)</text>
+  <text x="384" y="300" fill="#93a1b3" font-size="11">prompt on <tspan fill="#f0b429">stdin</tspan>, never argv</text>
+  <text x="384" y="316" fill="#93a1b3" font-size="11">every wait is bounded</text>
+  <text x="384" y="332" fill="#93a1b3" font-size="11">streams activity live</text>
+  <text x="384" y="352" fill="#5b6878" font-size="10.5">a popped message always replies</text>
+
+  <!-- agent -->
+  <rect x="640" y="84" width="206" height="126" rx="12" fill="#161b23" stroke="#52d18b" stroke-opacity=".45"/>
+  <text x="658" y="108" fill="#e6edf3" font-size="13.5" font-weight="650">your agent CLI</text>
+  <text x="658" y="128" fill="#93a1b3" font-size="11">claude · copilot · your own</text>
+  <line x1="658" y1="139" x2="828" y2="139" stroke="#2a323f"/>
+  <text x="658" y="157" fill="#93a1b3" font-size="11">reads · edits · runs commands</text>
+  <text x="658" y="173" fill="#93a1b3" font-size="11">inside one workspace</text>
+  <text x="658" y="193" fill="#5b6878" font-size="10.5">engines are config, not code</text>
+
+  <!-- relay hook -->
+  <rect x="640" y="240" width="206" height="126" rx="12" fill="#161b23" stroke="#f0b429" stroke-opacity=".5"/>
+  <text x="658" y="264" fill="#e6edf3" font-size="13.5" font-weight="650">approve / deny relay</text>
+  <text x="658" y="284" fill="#93a1b3" font-size="11">pre-tool hook</text>
+  <line x1="658" y1="295" x2="828" y2="295" stroke="#2a323f"/>
+  <text x="658" y="313" fill="#f0b429" font-size="11">mutating git</text>
+  <text x="658" y="329" fill="#f0b429" font-size="11">recursive deletes</text>
+  <text x="658" y="345" fill="#f0b429" font-size="11">data leaving the machine</text>
+  <text x="658" y="362" fill="#5b6878" font-size="10.5">→ one tap on your phone</text>
+
+  <!-- arrows -->
+  <path d="M160 196 L192 196" stroke="#5eb3ff" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M312 190 L362 150" stroke="#5eb3ff" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M362 168 L312 210" stroke="#52d18b" stroke-width="2" marker-end="url(#ag)"/>
+  <path d="M192 232 L160 232" stroke="#52d18b" stroke-width="2" marker-end="url(#ag)"/>
+
+  <path d="M464 214 L464 236" stroke="#5eb3ff" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M566 288 L636 200" stroke="#5eb3ff" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M636 176 L566 262" stroke="#52d18b" stroke-width="2" marker-end="url(#ag)"/>
+  <path d="M742 214 L742 236" stroke="#f0b429" stroke-width="2" marker-end="url(#aw)"/>
+  <path d="M636 302 L566 302" stroke="#f0b429" stroke-width="2" marker-end="url(#aw)"/>
+
+  <!-- legend -->
+  <circle cx="368" cy="410" r="4" fill="#5eb3ff"/><text x="380" y="414" fill="#93a1b3" font-size="11">your message going out</text>
+  <circle cx="546" cy="410" r="4" fill="#52d18b"/><text x="558" y="414" fill="#93a1b3" font-size="11">the reply coming back</text>
+  <circle cx="712" cy="410" r="4" fill="#f0b429"/><text x="724" y="414" fill="#93a1b3" font-size="11">something that needs a tap</text>
+</svg>

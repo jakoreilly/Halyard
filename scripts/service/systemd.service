@@ -1,0 +1,25 @@
+# Halyard as a systemd user service.
+#
+# Installed with:  halyard install-service
+# Enabled with:    systemctl --user enable --now halyard
+#
+# A USER service, not a system one, on purpose: Halyard runs an agent with your
+# credentials, in your files. Running it as root would be strictly worse in
+# every way and better in none.
+[Unit]
+Description=Halyard - drive a coding agent from your phone
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{NODE}} {{ENTRY}} start
+WorkingDirectory={{WORKDIR}}
+Environment=HALYARD_DATA_DIR={{DATA_DIR}}
+Restart=on-failure
+RestartSec=5
+# Journal only - the app keeps its own rotated log in the data dir.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

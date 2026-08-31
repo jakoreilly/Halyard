@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "Copy this to your data directory as halyard.config.json, or just run",
+    "`halyard setup` which writes one seeded with the resolved values for THIS",
+    "machine. `halyard doctor` prints where it is actually reading from.",
+    "Every key here is optional; anything you leave out uses the built-in default.",
+    "Full reference: docs/CONFIGURATION.md"
+  ],
+
+  "host": "127.0.0.1",
+  "port": 4545,
+  "publicUrl": "",
+
+  "workspace": "/absolute/path/to/the/one/project/the/agent/may/touch",
+  "defaultEngine": "claude",
+  "permissionMode": "default",
+
+  "runTimeoutMs": 1800000,
+  "postExitTimeoutMs": 20000,
+
+  "relay": {
+    "enabled": true,
+    "timeoutMs": 300000,
+    "rules": ["git", "destructive-fs", "network-egress"]
+  },
+
+  "push": {
+    "enabled": true,
+    "subject": "mailto:you@example.com"
+  },
+  "ntfy": {
+    "enabled": false,
+    "topic": ""
+  },
+
+  "engines": {
+    "claude": {
+      "command": "/opt/homebrew/bin/claude"
+    },
+    "aider": {
+      "label": "Aider",
+      "command": "aider",
+      "args": ["--no-pretty", "--yes", "--message-file", "-"],
+      "stream": "text",
+      "supportsRelayHook": false
+    }
+  },
+
+  "maxUploadBytes": 26214400,
+  "notificationRing": 30,
+  "transcriptRing": 200,
+  "archiveMaxBytes": 4194304,
+  "watchIntervalMs": 60000,
+  "logLevel": "info"
+}

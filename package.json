@@ -1,0 +1,46 @@
+{
+  "name": "halyard",
+  "version": "0.1.0",
+  "description": "Drive Claude Code (or any agent CLI) from your phone. Self-hosted, zero-dependency, cross-platform.",
+  "keywords": [
+    "claude-code",
+    "ai-agent",
+    "remote",
+    "mobile",
+    "cli",
+    "self-hosted",
+    "automation",
+    "pwa"
+  ],
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "bin": {
+    "halyard": "bin/halyard.js"
+  },
+  "main": "src/server.js",
+  "files": [
+    "bin",
+    "src",
+    "hooks",
+    "public",
+    "scripts",
+    "halyard.config.example.json"
+  ],
+  "scripts": {
+    "start": "node bin/halyard.js start",
+    "setup": "node bin/halyard.js setup",
+    "doctor": "node bin/halyard.js doctor",
+    "test": "node test/smoke.js && node test/e2e.js",
+    "check": "node -c src/server.js && node -c src/watcher.js && node -c hooks/permission-relay.js && node bin/halyard.js check-page",
+    "test:e2e": "node test/e2e.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jakoreilly/Halyard.git"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

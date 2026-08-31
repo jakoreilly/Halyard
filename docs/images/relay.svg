@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" width="900" height="400" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif">
+  <defs>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b98a9"/>
+    </marker>
+  </defs>
+  <rect width="900" height="400" rx="14" fill="#0e1116"/>
+
+  <text x="28" y="34" fill="#e6edf3" font-size="14" font-weight="650">What happens when an unattended run reaches for something irreversible</text>
+
+  <!-- lanes -->
+  <g font-size="11.5" fill="#93a1b3" text-anchor="middle">
+    <rect x="40"  y="56" width="150" height="26" rx="6" fill="#161b23" stroke="#2a323f"/><text x="115" y="74" fill="#e6edf3">agent</text>
+    <rect x="250" y="56" width="150" height="26" rx="6" fill="#161b23" stroke="#f0b429" stroke-opacity=".5"/><text x="325" y="74" fill="#e6edf3">relay hook</text>
+    <rect x="460" y="56" width="150" height="26" rx="6" fill="#161b23" stroke="#5eb3ff" stroke-opacity=".5"/><text x="535" y="74" fill="#e6edf3">halyard server</text>
+    <rect x="700" y="56" width="150" height="26" rx="6" fill="#161b23" stroke="#2a323f"/><text x="775" y="74" fill="#e6edf3">your phone</text>
+  </g>
+  <g stroke="#232b36" stroke-dasharray="3 5">
+    <line x1="115" y1="86" x2="115" y2="356"/>
+    <line x1="325" y1="86" x2="325" y2="356"/>
+    <line x1="535" y1="86" x2="535" y2="356"/>
+    <line x1="775" y1="86" x2="775" y2="356"/>
+  </g>
+
+  <g font-size="11.5" fill="#c6d2df">
+    <path d="M115 112 L318 112" stroke="#8b98a9" stroke-width="1.6" marker-end="url(#r)"/>
+    <text x="122" y="105">wants to run <tspan fill="#f0b429" font-family="ui-monospace, Menlo, Consolas, monospace">git push --force</tspan></text>
+
+    <path d="M325 152 L528 152" stroke="#8b98a9" stroke-width="1.6" marker-end="url(#r)"/>
+    <text x="332" y="145">matches a rule → ask, don't decide</text>
+
+    <path d="M535 192 L768 192" stroke="#8b98a9" stroke-width="1.6" marker-end="url(#r)"/>
+    <text x="542" y="185">encrypted push, with Approve / Deny buttons</text>
+
+    <path d="M768 232 L542 232" stroke="#52d18b" stroke-width="1.6" marker-end="url(#r)"/>
+    <text x="560" y="225" fill="#52d18b">one tap — no need to open the page</text>
+
+    <path d="M528 272 L332 272" stroke="#52d18b" stroke-width="1.6" marker-end="url(#r)"/>
+    <text x="352" y="265" fill="#52d18b">answered</text>
+
+    <path d="M318 312 L122 312" stroke="#52d18b" stroke-width="1.6" marker-end="url(#r)"/>
+    <text x="140" y="305" fill="#52d18b">allow — the command runs</text>
+  </g>
+
+  <rect x="40" y="336" width="820" height="44" rx="9" fill="#161b23" stroke="#2a323f"/>
+  <text x="58" y="354" fill="#93a1b3" font-size="11.5">No answer within five minutes is a <tspan fill="#ff6b6b">deny</tspan>, and a deny fails that one command — not the whole run.</text>
+  <text x="58" y="371" fill="#5b6878" font-size="11">Matching too eagerly costs one extra tap. Matching too narrowly costs the entire backstop. Every ambiguous case relays.</text>
+</svg>

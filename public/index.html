@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e1116">
+<meta name="color-scheme" content="dark light">
+<title>Halyard</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b23;
+    --panel-2: #1d232d;
+    --line: #2a323f;
+    --text: #e6edf3;
+    --muted: #93a1b3;
+    --accent: #5eb3ff;
+    --accent-dim: #1d3a56;
+    --good: #52d18b;
+    --warn: #f0b429;
+    --bad: #ff6b6b;
+    --radius: 14px;
+    --pad: 14px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f8fa; --panel: #ffffff; --panel-2: #eef2f6; --line: #d8dee6;
+      --text: #1b2430; --muted: #5b6878; --accent: #0a66c2; --accent-dim: #dbeafe;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, system-ui, sans-serif;
+    padding: 0 12px calc(96px + env(safe-area-inset-bottom));
+    max-width: 760px; margin: 0 auto;
+    overscroll-behavior-y: contain;
+  }
+  header {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 10px;
+    padding: calc(10px + env(safe-area-inset-top)) 2px 10px;
+    background: linear-gradient(var(--bg) 78%, transparent);
+  }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .3px; font-weight: 650; }
+  header .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  header .dot.up { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
+  header .dot.down { background: var(--bad); }
+  header .sp { flex: 1; }
+  .chip {
+    font-size: 12px; color: var(--muted); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; white-space: nowrap;
+  }
+  .chip.on { color: var(--accent); border-color: var(--accent); }
+
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin: 0 0 12px; overflow: hidden; }
+  section > h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
+    margin: 0; padding: 12px var(--pad) 0; font-weight: 600;
+  }
+  .body { padding: var(--pad); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 0; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .tiny { font-size: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+
+  button, select, input, textarea {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px;
+  }
+  button { cursor: pointer; -webkit-appearance: none; appearance: none; }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--accent); color: #06121f; border-color: transparent; font-weight: 620; }
+  button.ghost { background: transparent; }
+  button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); background: transparent; }
+  button:disabled { opacity: .5; cursor: default; }
+  textarea { width: 100%; resize: vertical; min-height: 84px; line-height: 1.45; }
+  select { padding-right: 26px; }
+
+  /* --- compose ------------------------------------------------------- */
+  .compose {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--line);
+  }
+  .compose .inner { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  .compose textarea { min-height: 44px; max-height: 40vh; border-radius: 12px; }
+  .compose button.primary { height: 44px; padding: 0 16px; flex: none; }
+
+  /* --- replies ------------------------------------------------------- */
+  .reply { border-top: 1px solid var(--line); padding: 12px var(--pad); }
+  .reply:first-child { border-top: 0; }
+  .reply .meta { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 6px; flex-wrap: wrap; }
+  .reply .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .reply .text code { background: var(--panel-2); padding: .1em .35em; border-radius: 5px; font-family: ui-monospace, monospace; font-size: .92em; }
+  .reply .text a { color: var(--accent); }
+  .reply .prompt { color: var(--muted); font-style: italic; margin-bottom: 6px; }
+  .reply .acts { display: flex; gap: 6px; margin-top: 9px; }
+  .reply .acts button { padding: 5px 9px; font-size: 12.5px; }
+  .reply.internal .text { color: var(--muted); }
+
+  /* --- run box ------------------------------------------------------- */
+  #run-box { border-color: var(--accent-dim); }
+  .pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: p 1.4s ease-in-out infinite; }
+  @keyframes p { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+  #run-activity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #run-draft { white-space: pre-wrap; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); color: var(--muted); max-height: 40vh; overflow: auto; }
+  #steps { margin-top: 10px; max-height: 45vh; overflow: auto; }
+  #steps div { padding: 3px 0; border-bottom: 1px solid var(--line); }
+
+  /* --- ask card ------------------------------------------------------ */
+  #ask { border-color: var(--warn); }
+  #ask .cmd { background: var(--panel-2); padding: 9px; border-radius: 9px; overflow-x: auto; white-space: pre; margin: 8px 0; }
+
+  .warn { color: var(--warn); }
+  .bad { color: var(--bad); }
+  details > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; list-style: none; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "▸ "; }
+  details[open] > summary::before { content: "▾ "; }
+  .hidden { display: none !important; }
+  .bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+  ul.plain { list-style: none; margin: 8px 0 0; padding: 0; }
+  ul.plain li { padding: 7px 0; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="dot" id="conn" title="connection"></span>
+  <h1>Halyard</h1>
+  <span class="sp"></span>
+  <span class="chip" id="chip-queue">0 queued</span>
+  <span class="chip" id="chip-engine">—</span>
+</header>
+
+<!-- approve / deny ------------------------------------------------------ -->
+<section id="ask" class="hidden">
+  <h2>Needs your approval</h2>
+  <div class="body">
+    <div id="ask-q"></div>
+    <div class="cmd mono" id="ask-cmd"></div>
+    <div class="row" id="ask-opts"></div>
+  </div>
+</section>
+
+<!-- active run ---------------------------------------------------------- -->
+<section id="run-box" class="hidden">
+  <h2><span class="pulse"></span> Running</h2>
+  <div class="body">
+    <div class="row">
+      <div class="grow small" id="run-what"></div>
+      <button class="danger" id="run-kill">Stop</button>
+    </div>
+    <div class="small muted" id="run-activity"></div>
+    <div class="small" id="run-draft"></div>
+  </div>
+</section>
+
+<!-- transcript (deliberately OUTSIDE the run box, so it survives the run) -->
+<section id="steps-box" class="hidden">
+  <div class="body">
+    <details id="steps-details">
+      <summary><span id="steps-count">0</span> steps</summary>
+      <div class="mono small" id="steps"></div>
+    </details>
+  </div>
+</section>
+
+<!-- failed / retry ------------------------------------------------------ -->
+<section id="failed" class="hidden">
+  <h2>Last run failed</h2>
+  <div class="body">
+    <div class="small" id="failed-why"></div>
+    <div class="small muted" id="failed-msg" style="margin:8px 0"></div>
+    <div class="row">
+      <button class="primary" id="failed-retry">Retry that message</button>
+      <button class="ghost" id="failed-dismiss">Dismiss</button>
+    </div>
+  </div>
+</section>
+
+<!-- replies ------------------------------------------------------------- -->
+<section>
+  <h2>Replies</h2>
+  <div class="body" style="padding-bottom:6px">
+    <div class="row">
+      <input class="grow" id="search" placeholder="Search all replies…" inputmode="search">
+      <button class="ghost" id="search-go">Find</button>
+    </div>
+    <div class="tiny muted" id="search-note" style="margin-top:6px"></div>
+  </div>
+  <div id="replies"></div>
+</section>
+
+<!-- status -------------------------------------------------------------- -->
+<section>
+  <h2>Status</h2>
+  <div class="body">
+    <div id="warnings"></div>
+    <div class="small mono muted" id="status-lines"></div>
+    <details style="margin-top:8px">
+      <summary>Scheduled messages</summary>
+      <ul class="plain" id="scheduled"></ul>
+    </details>
+    <details style="margin-top:4px">
+      <summary>Artifacts</summary>
+      <ul class="plain" id="artifacts"></ul>
+    </details>
+    <details style="margin-top:4px" id="spend-details">
+      <summary>Spend (7 days)</summary>
+      <div id="spend" class="small"></div>
+    </details>
+    <details style="margin-top:4px" id="logs-details">
+      <summary>Log tail</summary>
+      <div class="row" style="margin:8px 0">
+        <select id="log-file">
+          <option value="halyard">halyard.log</option>
+          <option value="messages">messages</option>
+          <option value="runs">runs</option>
+        </select>
+        <button class="ghost" id="log-go">Fetch</button>
+      </div>
+      <div class="mono tiny" id="log-out" style="max-height:45vh;overflow:auto;white-space:pre-wrap"></div>
+    </details>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost small" id="push-toggle">Enable push</button>
+      <span class="tiny muted grow" id="push-note"></span>
+    </div>
+  </div>
+</section>
+
+<!-- context ------------------------------------------------------------- -->
+<section>
+  <h2>Thread</h2>
+  <div class="body">
+    <div class="row">
+      <select class="grow" id="thread"></select>
+      <button class="ghost" id="thread-new">New</button>
+      <button class="ghost" id="thread-clear">Clear context</button>
+    </div>
+    <div class="small muted" id="handover" style="margin-top:10px"></div>
+  </div>
+</section>
+
+<!-- compose ------------------------------------------------------------- -->
+<div class="compose">
+  <div class="inner">
+    <textarea id="msg" placeholder="Message the agent…" enterkeyhint="send"></textarea>
+    <button class="primary" id="send">Send</button>
+  </div>
+  <div class="inner" style="margin-top:8px;gap:6px">
+    <select id="engine" class="tiny grow"></select>
+    <select id="model" class="tiny grow"></select>
+    <select id="when" class="tiny grow">
+      <option value="">Now</option>
+      <option value="+1h">In 1 hour</option>
+      <option value="07:00">Tomorrow 07:00</option>
+      <option value="daily:07:00">Every day 07:00</option>
+      <option value="weekdays:08:30">Weekdays 08:30</option>
+      <option value="weekly:09:00">Weekly 09:00</option>
+    </select>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // The token is in the URL the notification / home-screen icon opened, and the
+  // server also sets it as a cookie, so an in-page navigation keeps working.
+  var TOKEN = new URLSearchParams(location.search).get('token') || '';
+  var $ = function (id) { return document.getElementById(id); };
+  var LS = {
+    get: function (k, d) { try { var v = localStorage.getItem('halyard.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set: function (k, v) { try { localStorage.setItem('halyard.' + k, JSON.stringify(v)); } catch (e) {} }
+  };
+
+  function api(path, opts) {
+    var sep = path.indexOf('?') === -1 ? '?' : '&';
+    return fetch(path + sep + 'token=' + encodeURIComponent(TOKEN), opts || {})
+      .then(function (r) { return r.text().then(function (t) {
+        var body = null; try { body = t ? JSON.parse(t) : null; } catch (e) { body = { raw: t }; }
+        if (!r.ok) { var e2 = new Error((body && body.error) || r.status); e2.status = r.status; throw e2; }
+        return body;
+      }); });
+  }
+  function post(path, body) {
+    return api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
+  }
+
+  // ---------------------------------------------------------------------
+  // Rendering
+  //
+  // Escape FIRST, then re-add a small fixed set of tags. Nothing else passes
+  // through, so a reply can never inject markup - which matters because the
+  // reply text is written by a language model that has been reading whatever
+  // it was pointed at.
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function renderRich(s) {
+    var h = esc(s);
+    h = h.replace(/(https?:\/\/[^\s&<]+)/g, function (m) { return '<a href="' + m + '" target="_blank" rel="noopener">' + m + '</a>'; });
+    h = h.replace(/(^|\s)(\/artifacts\/[A-Za-z0-9._\-\/]+)/g, function (m, pre, p) {
+      return pre + '<a href="' + p + '?token=' + encodeURIComponent(TOKEN) + '" target="_blank" rel="noopener">' + p + '</a>';
+    });
+    h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    h = h.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    return h;
+  }
+  function ago(ms) {
+    var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.round(s / 60) + 'm ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  }
+
+  // ---------------------------------------------------------------------
+  // Speech: this thing gets checked one-handed while walking, and a
+  // four-paragraph reply is the case where a screen is the wrong device.
+  var speaking = null;
+  function speak(text, btn, reset) {
+    if (!window.speechSynthesis) return;
+    // One utterance at a time, tracked globally - two replies reading over each
+    // other is unusable, and a button whose utterance was cancelled by another
+    // has to be able to find that out or it sits on "Stop" forever.
+    if (speaking) { speechSynthesis.cancel(); if (speaking.reset) speaking.reset(); speaking = null; if (speaking === btn) return; }
+    // URLs read out as forty characters of token, one at a time. Deleting them
+    // leaves a sentence that no longer makes sense, so they become "link".
+    var u = new SpeechSynthesisUtterance(String(text).replace(/https?:\/\/\S+/g, 'link').replace(/\/artifacts\/\S+/g, 'link'));
+    u.onend = u.onerror = function () { if (speaking && speaking.reset) speaking.reset(); speaking = null; };
+    speaking = { reset: reset };
+    btn.textContent = 'Stop';
+    speechSynthesis.speak(u);
+  }
+
+  // ---------------------------------------------------------------------
+  // State the page holds
+
+  var health = null;
+  var lastSeq = {};
+  var lastRunId = {};
+  var steps = [];
+
+  function renderHealth(h) {
+    health = h;
+    $('conn').className = 'dot up';
+    $('chip-queue').textContent = h.queued + ' queued' + (h.scheduled ? ' · ' + h.scheduled + ' later' : '');
+    $('chip-engine').textContent = h.defaultEngine;
+
+    var w = $('warnings');
+    w.innerHTML = (h.warnings || []).map(function (x) {
+      return '<div class="small ' + (x.level === 'warn' ? 'warn' : 'muted') + '" style="margin-bottom:6px">' +
+        (x.level === 'warn' ? '⚠ ' : 'ℹ ') + esc(x.msg) + '</div>';
+    }).join('');
+
+    var lines = [
+      'workspace   ' + h.workspace,
+      'engine      ' + h.defaultEngine + '   mode ' + h.permissionMode,
+      'relay       ' + (h.relay.enabled ? 'on' : 'OFF'),
+      'lock        ' + (h.lock ? 'held ' + Math.round(h.lock.ageMs / 1000) + 's by pid ' + h.lock.pid : 'free'),
+      'push        ' + h.push.subscribers + ' subscriber(s)',
+      'version     ' + h.version
+    ];
+    $('status-lines').textContent = lines.join('\n');
+
+    renderRunBox(h.activeRun);
+    renderFailed(h.lastFailed);
+
+    // Transcript: fetch only the delta, and only when the counter moved.
+    var t = (h.transcript || {})[h.activeRun ? h.activeRun.engine : h.defaultEngine];
+    if (t) {
+      if (lastRunId[t.runId] === undefined && t.runId !== (window.__runId || '')) {
+        // runId changed -> a new run -> start the sequence over. Starting each
+        // run at 0 instead would hand a phone still holding `since` from the
+        // last run the new run's lines as though it had seen them.
+        window.__runId = t.runId; steps = []; lastSeq.v = 0;
+      }
+      if (t.seq > (lastSeq.v || 0)) fetchTranscript(h.activeRun ? h.activeRun.engine : h.defaultEngine);
+    }
+  }
+
+  function renderRunBox(run) {
+    var box = $('run-box');
+    if (!run) {
+      box.classList.add('hidden');
+      // A leftover draft above a finished reply reads as part of it.
+      $('run-draft').textContent = '';
+      return;
+    }
+    box.classList.remove('hidden');
+    $('run-what').textContent = run.thread + ' · ' + run.engine + (run.model ? ' · ' + run.model : '') +
+      ' · ' + Math.round((Date.now() - run.startedAt) / 1000) + 's';
+    $('run-activity').textContent = run.activity || 'starting…';
+    $('run-kill').disabled = !!run.killRequested;
+    $('run-kill').textContent = run.killRequested ? 'Stopping…' : 'Stop';
+  }
+
+  function fetchTranscript(engine) {
+    api('/api/run/transcript?engine=' + encodeURIComponent(engine || '') + '&since=' + (lastSeq.v || 0))
+      .then(function (t) {
+        lastSeq.v = t.seq;
+        if (t.lines.length) {
+          steps = steps.concat(t.lines).slice(-300);
+          $('steps').innerHTML = steps.map(function (l) { return '<div>' + esc(l.text) + '</div>'; }).join('');
+          $('steps').scrollTop = $('steps').scrollHeight;
+        }
+        $('steps-count').textContent = steps.length;
+        $('steps-box').classList.toggle('hidden', !steps.length);
+        // textContent, never renderRich: half-rendered markdown mid-sentence
+        // looks like a rendering bug rather than a work in progress.
+        $('run-draft').textContent = t.draft || '';
+      }).catch(function () {});
+  }
+
+  function renderFailed(f) {
+    $('failed').classList.toggle('hidden', !f);
+    if (!f) return;
+    $('failed-why').textContent = f.reason;
+    $('failed-msg').textContent = '“' + String(f.message).slice(0, 300) + '”';
+  }
+
+  function renderState(s) {
+    var pending = s && s.status === 'pending';
+    $('ask').classList.toggle('hidden', !pending);
+    if (!pending) return;
+    $('ask-q').textContent = s.question;
+    $('ask-cmd').textContent = s.command;
+    $('ask-opts').innerHTML = '';
+    s.options.forEach(function (opt) {
+      var b = document.createElement('button');
+      b.textContent = opt;
+      b.className = /approve|allow|yes/i.test(opt) ? 'primary' : 'danger';
+      b.onclick = function () {
+        b.disabled = true;
+        post('/api/answer', { id: s.id, answer: opt }).then(pollState).catch(function (e) { alert(e.message); });
+      };
+      $('ask-opts').appendChild(b);
+    });
+  }
+
+  function renderReplies(items) {
+    var box = $('replies');
+    box.innerHTML = '';
+    if (!items.length) {
+      box.innerHTML = '<div class="body muted small">Nothing yet.</div>';
+      return;
+    }
+    items.forEach(function (n) {
+      var el = document.createElement('div');
+      el.className = 'reply' + (n.internal ? ' internal' : '');
+      var meta = [ago(n.at), n.thread, n.engine, n.model].filter(Boolean);
+      if (Number.isFinite(n.costUsd)) meta.push('$' + n.costUsd.toFixed(4));
+      if (Number.isFinite(n.durationMs)) meta.push(Math.round(n.durationMs / 1000) + 's');
+      el.innerHTML =
+        '<div class="meta">' + meta.map(esc).join(' · ') + '</div>' +
+        (n.prompt ? '<div class="prompt small">' + esc(n.prompt.slice(0, 200)) + '</div>' : '') +
+        '<div class="text">' + renderRich(n.message) + '</div>';
+
+      var acts = document.createElement('div');
+      acts.className = 'acts';
+      if (window.speechSynthesis) {
+        var sb = document.createElement('button');
+        sb.className = 'ghost'; sb.textContent = 'Read';
+        sb.onclick = function () { speak(n.message, sb, function () { sb.textContent = 'Read'; }); };
+        acts.appendChild(sb);
+      }
+      var cb = document.createElement('button');
+      cb.className = 'ghost'; cb.textContent = 'Copy';
+      cb.onclick = function () { navigator.clipboard.writeText(n.message); cb.textContent = 'Copied'; setTimeout(function () { cb.textContent = 'Copy'; }, 1200); };
+      acts.appendChild(cb);
+      var db = document.createElement('button');
+      db.className = 'ghost'; db.textContent = 'Delete';
+      db.onclick = function () {
+        if (!confirm('Delete this reply? This cannot be undone.')) return;
+        api('/api/notifications?id=' + encodeURIComponent(n.id), { method: 'DELETE' }).then(pollNotifications);
+      };
+      acts.appendChild(db);
+      el.appendChild(acts);
+      box.appendChild(el);
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Pollers. These are the SAME functions the change stream triggers - the
+  // stream only answers "has anything changed yet?", which is the part a timer
+  // answers badly. Every render path and payload shape stays as it was.
+
+  function pollHealth() { return api('/api/health').then(renderHealth).catch(connDown); }
+  function pollState() { return api('/api/state').then(renderState).catch(function () {}); }
+  function pollNotifications() { return api('/api/notifications').then(function (r) { renderReplies(r.items); }).catch(function () {}); }
+  function pollContext() {
+    return Promise.all([api('/api/threads'), api('/api/handover?thread=' + encodeURIComponent(thread()))])
+      .then(function (r) {
+        var sel = $('thread'), cur = thread();
+        sel.innerHTML = r[0].items.map(function (t) {
+          return '<option value="' + esc(t.name) + '"' + (t.name === cur ? ' selected' : '') + '>' + esc(t.name) + (t.hasContext ? ' •' : '') + '</option>';
+        }).join('');
+        $('handover').textContent = r[1].exists ? r[1].text : 'No carried context in this thread yet.';
+      }).catch(function () {});
+  }
+  function pollArtifacts() {
+    return api('/api/artifacts').then(function (r) {
+      $('artifacts').innerHTML = r.items.length ? r.items.map(function (a) {
+        return '<li><a class="grow" href="/artifacts/' + encodeURIComponent(a.name) + '?token=' + encodeURIComponent(TOKEN) + '" target="_blank" rel="noopener">' + esc(a.name) + '</a>' +
+          '<span class="tiny muted">' + Math.max(1, Math.round(a.size / 1024)) + 'kB</span></li>';
+      }).join('') : '<li class="muted small">None.</li>';
+    }).catch(function () {});
+  }
+  function pollScheduled() {
+    return api('/api/inbox/scheduled').then(function (r) {
+      $('scheduled').innerHTML = r.items.length ? r.items.map(function (i) {
+        return '<li><span class="grow small">' + esc(i.message.slice(0, 70)) + '</span>' +
+          '<span class="tiny muted">' + new Date(i.runAfter).toLocaleString() + (i.repeat ? ' · ' + i.repeat : '') + '</span>' +
+          '<button class="ghost tiny" data-cancel="' + esc(i.id) + '">✕</button></li>';
+      }).join('') : '<li class="muted small">None.</li>';
+    }).catch(function () {});
+  }
+
+  function connDown() { $('conn').className = 'dot down'; }
+
+  // ---------------------------------------------------------------------
+  // The change stream, and the timers it replaces.
+  //
+  // It must degrade to the OLD behaviour, not to a frozen page. The original
+  // intervals are still wired; while the stream is connected they fire at a
+  // tenth of their rate as a backstop against a missed bump, and snap back to
+  // full speed the moment EventSource reports an error. A page that never
+  // connects behaves exactly as it did before any of this existed.
+  var BASE_MS = { health: 4000, state: 3000, notifications: 6000, context: 20000, artifacts: 30000 };
+  var streamOk = false;
+  var timers = {};
+
+  function retime() {
+    Object.keys(timers).forEach(function (k) { clearInterval(timers[k]); });
+    var mult = streamOk ? 10 : 1;
+    timers.health = setInterval(pollHealth, BASE_MS.health * mult);
+    timers.state = setInterval(pollState, BASE_MS.state * mult);
+    timers.notifications = setInterval(pollNotifications, BASE_MS.notifications * mult);
+    timers.context = setInterval(pollContext, BASE_MS.context * mult);
+    timers.artifacts = setInterval(pollArtifacts, BASE_MS.artifacts * mult);
+  }
+
+  var seen = {};
+  function connectStream() {
+    if (!window.EventSource) return;
+    var es = new EventSource('/api/events?token=' + encodeURIComponent(TOKEN));
+    es.onopen = function () { streamOk = true; retime(); $('conn').className = 'dot up'; };
+    es.onmessage = function (ev) {
+      var v; try { v = JSON.parse(ev.data); } catch (e) { return; }
+      if (v.health !== seen.health) { seen.health = v.health; pollHealth(); }
+      if (v.state !== seen.state) { seen.state = v.state; pollState(); }
+      if (v.notifications !== seen.notifications) { seen.notifications = v.notifications; pollNotifications(); pollScheduled(); }
+      if (v.context !== seen.context) { seen.context = v.context; pollContext(); }
+      if (v.artifacts !== seen.artifacts) { seen.artifacts = v.artifacts; pollArtifacts(); }
+    };
+    es.onerror = function () {
+      streamOk = false; retime(); connDown();
+      es.close();
+      setTimeout(connectStream, 5000);
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Compose
+
+  function thread() { return $('thread').value || LS.get('thread', 'main'); }
+
+  // The phone computes only the FIRST occurrence, because "07:00" means 07:00
+  // where the phone is and only the phone knows that. Everything after it is
+  // the server's job, which is what keeps a repeat firing when the page is
+  // closed.
+  function scheduleSpec(v) {
+    if (!v) return {};
+    if (v === '+1h') return { runAfter: Date.now() + 3600e3 };
+    var m = /^(?:(daily|weekdays|weekly):)?(\d{2}):(\d{2})$/.exec(v);
+    if (!m) return {};
+    var d = new Date();
+    d.setHours(Number(m[2]), Number(m[3]), 0, 0);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    if (m[1] === 'weekdays') while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    return { runAfter: d.getTime(), repeat: m[1] || null };
+  }
+
+  function send() {
+    var text = $('msg').value.trim();
+    if (!text) return;
+    var payload = Object.assign({
+      message: text,
+      thread: thread(),
+      engine: $('engine').value,
+      model: $('model').value
+    }, scheduleSpec($('when').value));
+    $('send').disabled = true;
+    post('/api/inbox', payload).then(function () {
+      $('msg').value = '';
+      $('when').value = '';
+      pollHealth(); pollScheduled();
+    }).catch(function (e) { alert('Could not queue: ' + e.message); })
+      .finally(function () { $('send').disabled = false; });
+  }
+
+  function fillEngines() {
+    if (!health) return;
+    var eSel = $('engine');
+    if (eSel.options.length !== health.engines.length) {
+      var pref = LS.get('engine', health.defaultEngine);
+      eSel.innerHTML = health.engines.map(function (e) {
+        return '<option value="' + esc(e.name) + '"' + (e.name === pref ? ' selected' : '') + '>' +
+          esc(e.label || e.name) + (e.relay ? '' : ' (no relay)') + '</option>';
+      }).join('');
+      fillModels();
+    }
+  }
+  function fillModels() {
+    if (!health) return;
+    var e = health.engines.filter(function (x) { return x.name === $('engine').value; })[0];
+    var pref = LS.get('model', '');
+    $('model').innerHTML = '<option value="">Default model</option>' +
+      ((e && e.models) || []).map(function (m) {
+        return '<option value="' + esc(m) + '"' + (m === pref ? ' selected' : '') + '>' + esc(m) + '</option>';
+      }).join('');
+  }
+
+  // ---------------------------------------------------------------------
+  // Push. Needs a secure context: over plain http the PushManager is simply
+  // absent, and the hint line says which tier is actually in force rather than
+  // leaving a button that does nothing.
+  function pushState() {
+    if (!('serviceWorker' in navigator)) return 'unsupported';
+    if (!window.isSecureContext) return 'insecure';
+    if (!('PushManager' in window)) return 'unsupported';
+    return 'available';
+  }
+  function setupPush() {
+    var st = pushState();
+    var note = $('push-note'), btn = $('push-toggle');
+    if (st === 'insecure') {
+      note.textContent = 'Push needs HTTPS or localhost. Over plain http you only get alerts while this page is open.';
+      btn.disabled = true; return;
+    }
+    if (st === 'unsupported') { note.textContent = 'This browser has no Web Push.'; btn.disabled = true; return; }
+    note.textContent = 'Delivered from this machine, encrypted end to end.';
+    btn.onclick = function () {
+      btn.disabled = true;
+      Notification.requestPermission().then(function (p) {
+        if (p !== 'granted') { note.textContent = 'Notifications were declined.'; btn.disabled = false; return; }
+        return Promise.all([navigator.serviceWorker.ready, api('/api/push/key')]).then(function (r) {
+          var reg = r[0], key = r[1].publicKey;
+          if (!key) throw new Error('no VAPID key on the server');
+          return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(key) });
+        }).then(function (sub) {
+          return post('/api/push/subscribe', sub.toJSON());
+        }).then(function () { note.textContent = 'Push is on.'; btn.textContent = 'Send test'; btn.onclick = function () { post('/api/push/test'); }; btn.disabled = false; });
+      }).catch(function (e) { note.textContent = 'Push setup failed: ' + e.message; btn.disabled = false; });
+    };
+  }
+  function b64ToU8(s) {
+    var pad = '='.repeat((4 - s.length % 4) % 4);
+    var raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, function (c) { return c.charCodeAt(0); });
+  }
+
+  // ---------------------------------------------------------------------
+  // Wiring
+
+  $('send').onclick = send;
+  $('msg').addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
+  });
+  $('engine').onchange = function () { LS.set('engine', this.value); fillModels(); };
+  $('model').onchange = function () { LS.set('model', this.value); };
+  $('thread').onchange = function () { LS.set('thread', this.value); pollContext(); };
+  $('thread-new').onclick = function () {
+    var name = prompt('Thread name (letters, numbers and dashes):');
+    if (!name) return;
+    LS.set('thread', name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+    var o = document.createElement('option');
+    o.value = o.textContent = LS.get('thread', 'main');
+    $('thread').appendChild(o); $('thread').value = o.value;
+    pollContext();
+  };
+  $('thread-clear').onclick = function () {
+    if (!confirm('Clear this thread’s carried context and session?')) return;
+    post('/api/handover/clear', { thread: thread() }).then(pollContext);
+  };
+  $('run-kill').onclick = function () { post('/api/run/kill').then(pollHealth); };
+  $('failed-retry').onclick = function () { post('/api/inbox/retry').then(function () { pollHealth(); }); };
+  $('failed-dismiss').onclick = function () { post('/api/inbox/dismiss-failed').then(pollHealth); };
+  $('scheduled').onclick = function (e) {
+    var id = e.target.getAttribute('data-cancel');
+    if (id) api('/api/inbox/scheduled?id=' + encodeURIComponent(id), { method: 'DELETE' }).then(pollScheduled);
+  };
+  $('search-go').onclick = function () {
+    var q = $('search').value.trim();
+    // Merge, do not replace: the ring and the archive can each hold something
+    // the other does not, and an unreachable server has to say so rather than
+    // render as "no matches" - those are very different answers.
+    Promise.all([
+      api('/api/messages?limit=100&q=' + encodeURIComponent(q)).catch(function () { return null; }),
+      api('/api/notifications').catch(function () { return { items: [] }; })
+    ]).then(function (r) {
+      if (!r[0]) { $('search-note').textContent = 'Archive unreachable — showing recent replies only.'; renderReplies(r[1].items); return; }
+      var byId = {};
+      r[0].items.concat(r[1].items).forEach(function (n) { byId[n.id] = n; });
+      var merged = Object.keys(byId).map(function (k) { return byId[k]; })
+        .filter(function (n) { return !q || String(n.message).toLowerCase().indexOf(q.toLowerCase()) !== -1; })
+        .sort(function (a, b) { return b.at - a.at; });
+      $('search-note').textContent = q ? merged.length + ' match(es) across ' + r[0].total + ' archived' : '';
+      renderReplies(merged.slice(0, 100));
+    });
+  };
+  $('log-go').onclick = function () {
+    api('/api/logs?tail=200&file=' + encodeURIComponent($('log-file').value))
+      .then(function (r) { $('log-out').textContent = r.lines.join('\n') || (r.note || 'empty'); })
+      .catch(function (e) { $('log-out').textContent = 'error: ' + e.message; });
+  };
+  $('spend-details').addEventListener('toggle', function () {
+    if (!this.open) return;
+    api('/api/spend?days=7').then(function (s) {
+      var max = Math.max.apply(null, s.byDay.map(function (d) { return d.costUsd; }).concat([0.0001]));
+      $('spend').innerHTML =
+        '<div style="margin-bottom:8px">$' + s.totalUsd.toFixed(2) + ' over ' + s.runs + ' run(s)</div>' +
+        s.byDay.map(function (d) {
+          return '<div class="tiny muted" style="margin-bottom:4px">' + d.day + ' — $' + d.costUsd.toFixed(3) +
+            '<div class="bar"><i style="width:' + Math.round(100 * d.costUsd / max) + '%"></i></div></div>';
+        }).join('') +
+        '<div class="tiny muted" style="margin-top:8px">' + s.byThread.map(function (t) { return esc(t.key) + ' $' + t.costUsd.toFixed(3); }).join(' · ') + '</div>';
+    }).catch(function (e) { $('spend').textContent = 'unavailable: ' + e.message; });
+  });
+
+  // Service worker. REQUIRED_SW_VERSION and SW_VERSION are bumped together; the
+  // page pings the worker and warns when what answers is too old, which is what
+  // turns "silently running last month's worker" into a visible message. Note
+  // an old worker has no message handler and does not reply at all, so "no
+  // answer" and "old worker" look identical from here - a non-answer is never
+  // read as "no worker registered".
+  var REQUIRED_SW_VERSION = 1;
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').then(function (reg) {
+      setTimeout(function () {
+        if (!reg.active) return;
+        var ch = new MessageChannel();
+        ch.port1.onmessage = function (e) {
+          if (e.data && e.data.version < REQUIRED_SW_VERSION) {
+            $('push-note').textContent = 'An old service worker is still active — close every tab of this page and reopen it.';
+          }
+        };
+        reg.active.postMessage({ type: 'version' }, [ch.port2]);
+      }, 1500);
+    }).catch(function () {});
+  }
+
+  // Kick off
+  $('thread').innerHTML = '<option>' + esc(LS.get('thread', 'main')) + '</option>';
+  pollHealth().then(fillEngines);
+  pollState(); pollNotifications(); pollContext(); pollArtifacts(); pollScheduled();
+  setupPush();
+  retime();
+  connectStream();
+  setInterval(function () { if (health && health.activeRun) renderRunBox(health.activeRun); }, 1000);
+})();
+</script>
+</body>
+</html>

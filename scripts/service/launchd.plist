@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Halyard as a launchd LaunchAgent (per-user, not a system daemon).
+
+  Installed with:  halyard install-service
+  Loaded with:     launchctl load ~/Library/LaunchAgents/com.halyard.bridge.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>            <string>com.halyard.bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NODE}}</string>
+    <string>{{ENTRY}}</string>
+    <string>start</string>
+  </array>
+  <key>WorkingDirectory</key> <string>{{WORKDIR}}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HALYARD_DATA_DIR</key> <string>{{DATA_DIR}}</string>
+  </dict>
+  <key>RunAtLoad</key>        <true/>
+  <key>KeepAlive</key>        <true/>
+  <key>StandardOutPath</key>  <string>{{DATA_DIR}}/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>{{DATA_DIR}}/launchd.err.log</string>
+</dict>
+</plist>

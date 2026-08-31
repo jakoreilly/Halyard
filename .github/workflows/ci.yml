@@ -1,0 +1,36 @@
+name: ci
+
+# Runs on all three platforms, because "cross-platform" is a claim this project
+# makes in its first sentence and an untested claim is a wish. The most
+# Windows-specific things here - process spawning, pipe teardown, filename
+# rules - are exactly the ones the tests exercise.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['18', '20', '22']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # No `npm ci`. There are no dependencies, and adding an install step here
+      # would quietly make one possible.
+      - run: node --version
+      - run: node bin/halyard.js check-page
+      - run: node test/smoke.js
+      - run: node test/e2e.js
+      - name: cli surface
+        run: |
+          node bin/halyard.js setup --data-dir ./ci-data
+          node bin/halyard.js doctor --data-dir ./ci-data
+          node bin/halyard.js hook-config --data-dir ./ci-data
+          node bin/halyard.js install-service --data-dir ./ci-data
