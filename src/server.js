@@ -248,8 +248,10 @@ function createServer(ctx) {
   const watchers = [];
   function watchDir(dir, channel) {
     let timer = null;
+    let real = dir;
+    try { real = fs.realpathSync.native(dir); } catch (e) { /* ignore - keep raw path */ }
     try {
-      const w = fs.watch(dir, { persistent: false }, () => {
+      const w = fs.watch(real, { persistent: false }, () => {
         clearTimeout(timer);
         // Directory watching means seeing every write in the folder, hence the
         // debounce: a run writing a dozen files should wake the phone once.
@@ -257,7 +259,7 @@ function createServer(ctx) {
       });
       watchers.push({ w, stop: () => clearTimeout(timer) });
     } catch (e) {
-      log.debug(`cannot watch ${dir}: ${e.message}`);
+      log.debug(`cannot watch ${dir}${real && real !== dir ? ` (${real})` : ''}: ${e.message}`);
     }
   }
 
