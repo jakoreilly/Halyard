@@ -255,7 +255,7 @@ function buildPrompt({ item, thread, engine, cfg }) {
       ? 'Mutating git commands, recursive deletes and outbound network calls are relayed to the phone for an approve/deny tap before they run. Use them normally; expect one pause.'
       : 'There is no approve/deny relay on this engine. Be conservative with anything destructive or outbound.',
     '',
-    'Reply concisely - the answer is read on a phone screen. Prefer doing the work and reporting what you did over asking whether you should.',
+    'Reply concisely - the answer is read on a phone screen. Prefer doing the work and reporting what you did over asking whether you should. If a message is genuinely ambiguous between two real interpretations - not merely underspecified - check the message log and any carried context first; if it is still ambiguous, run `halyard ask "<question>" --options "a|b"` (give the tool call a long timeout) and continue this same turn with the answer, rather than guessing or ending the turn with a question of your own.',
   );
   if (thread.handover) {
     parts.push(
@@ -311,6 +311,36 @@ function changeFooter(result) {
   } catch (e) {
     return '';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-engine failover
+//
+// Pure and independently testable, same style as `nextOccurrence` and
+// `matchRelayRule` elsewhere in this codebase - no process spawn needed to
+// exercise the decision.
+//
+// Two triggers, both meaning "this engine looks unable to answer right now"
+// rather than "this specific message is bad": a silent death (a non-zero exit
+// with literally nothing on stderr and no reply - consistent with an
+// environment/auth/quota failure that never got as far as writing a message),
+// or stderr that reads like a rate limit, quota or auth problem. A user-
+// requested Stop or a run that hit its own time budget are neither of those -
+// they are not "this engine is down", so the caller checks `result.killed`/
+// `result.timedOut` before ever reaching this function.
+const CAPACITY_OR_AUTH = /rate.?limit|usage limit|quota|too many requests|\b429\b|\b401\b|unauthorized|authentication|billing/i;
+
+function decideReroute({ item, cfg, engineName, result }) {
+  const f = cfg.failover;
+  if (!f || !f.enabled || !f.to || f.to === engineName || !cfg.engines[f.to]) return null;
+  // Already hopped once. Two engines that both fail on the same message would
+  // otherwise ping-pong it forever, burning a full run on each hop.
+  if (item.rerouted) return null;
+  if (result.reply) return null;
+  const silent = result.exitCode !== 0 && !String(result.stderr || '').trim();
+  const looksDown = CAPACITY_OR_AUTH.test(result.stderr || '');
+  if (!silent && !looksDown) return null;
+  return { to: f.to, reason: silent ? `${engineName} exited silently` : `${engineName} looks rate-limited or unauthenticated` };
 }
 
 // ---------------------------------------------------------------------------
@@ -381,6 +411,28 @@ async function processOne(ctx, item) {
 
   if (result.killed) throw new Error('run cancelled from the phone');
   if (result.timedOut) throw new Error(`run exceeded its ${Math.round(cfg.runTimeoutMs / 60000)} minute budget and was stopped`);
+
+  const reroute = decideReroute({ item, cfg, engineName, result });
+  if (reroute) {
+    log.warn(`rerouting ${item.id} from ${engineName} to ${reroute.to}: ${reroute.reason}`);
+    // Front of the queue and marked `rerouted`, so the loop's own
+    // while-consumed-a-message tick immediately picks it back up on the other
+    // engine, and neither engine can bounce it a second time.
+    // A throwing post, not tryPost: the message has already been irrevocably
+    // popped, so if THIS re-queue fails there is no other record of it left
+    // anywhere. Letting the failure propagate sends it through the normal
+    // catch in runOnce below, which knows how to fail a message safely
+    // (lastFailed + a phone-visible retry) - swallowing it here would be
+    // silent, permanent loss with no way back.
+    await client.post('/api/inbox', {
+      message: item.message, thread: thread.name, engine: reroute.to, model: item.model || '', front: true, rerouted: true,
+    });
+    await client.tryPost('/api/notify', {
+      message: `Rerouted to ${reroute.to}: ${reroute.reason}. Retrying now.`, thread: thread.name, engine: engineName,
+    });
+    return { runId, engine: engineName, rerouted: true };
+  }
+
   if (!result.reply) {
     const tail = String(result.stderr || '').trim().split('\n').slice(-3).join(' ');
     throw new Error(`the agent exited ${result.exitCode} without producing a reply${tail ? ` (${tail})` : ''}`);
@@ -478,4 +530,4 @@ function startLoop(ctx) {
   };
 }
 
-module.exports = { runOnce, startLoop, runAgent, buildArgs, buildPrompt, splitHandover, changeFooter };
+module.exports = { runOnce, startLoop, runAgent, buildArgs, buildPrompt, splitHandover, changeFooter, decideReroute, CAPACITY_OR_AUTH };

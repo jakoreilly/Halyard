@@ -307,24 +307,109 @@ async function cmdToken(argv) {
 // not hand out.
 async function cmdHookConfig(argv) {
   const boot = bootstrap(argv);
-  const hook = path.join(__dirname, '..', 'hooks', 'permission-relay.js');
+  const relayHook = path.join(__dirname, '..', 'hooks', 'permission-relay.js');
+  const nudgeHook = path.join(__dirname, '..', 'hooks', 'nudge-inject.js');
   const conf = {
     hooks: {
-      PreToolUse: [{
-        // MUST name every tool that can run a shell, not just Bash. A CLI that
-        // also ships a PowerShell tool lets a run walk around a Bash-only
-        // matcher entirely, and under a loosened permission mode "unrelayed"
-        // means "runs, unprompted".
-        matcher: 'Bash|PowerShell',
-        hooks: [{ type: 'command', command: `node "${hook}"` }],
-      }],
+      PreToolUse: [
+        {
+          // MUST name every tool that can run a shell, not just Bash. A CLI
+          // that also ships a PowerShell tool lets a run walk around a
+          // Bash-only matcher entirely, and under a loosened permission mode
+          // "unrelayed" means "runs, unprompted".
+          matcher: 'Bash|PowerShell',
+          hooks: [{ type: 'command', command: `node "${relayHook}"` }],
+        },
+        {
+          // `*`, not the relay's tool list: a run that only edits files makes
+          // no shell call and would otherwise never receive a steer from the
+          // phone. This one always passes through a call the relay matcher
+          // above would also see, so the two never fight over one call.
+          matcher: '*',
+          hooks: [{ type: 'command', command: `node "${nudgeHook}"` }],
+        },
+      ],
     },
   };
   console.log(`\n  Paste into your agent's settings (for Claude Code: .claude/settings.json in ${boot.cfg.workspace}):\n`);
   console.log(JSON.stringify(conf, null, 2));
-  console.log(`\n  The matcher and the RELAYED_TOOLS set inside the hook must agree.`);
+  console.log(`\n  The matcher and the RELAYED_TOOLS set inside permission-relay.js must agree.`);
   console.log(`  A tool missing from the MATCHER never reaches the hook at all.`);
-  console.log(`  A tool missing from RELAYED_TOOLS reaches it and is waved through.\n`);
+  console.log(`  A tool missing from RELAYED_TOOLS reaches it and is waved through.`);
+  console.log(`\n  The steer hook (nudge-inject.js) needs an agent CLI with a pre-tool hook`);
+  console.log(`  at all - today that means Claude Code. Copilot and a plain CLI have no such`);
+  console.log(`  mechanism, so "halyard doctor" and the phone both mark those engines as`);
+  console.log(`  unable to be steered mid-run, same as they already do for the relay.\n`);
+}
+
+// A genuine mid-run question, distinct from the approve/deny relay: for a fork
+// where both branches are legitimate and only the person holding the phone
+// knows which was meant. Needs no pre-tool hook at all - it is just an HTTP
+// round trip a script makes - so unlike the relay and the steer hook, this
+// works for every engine, not only ones with a pre-tool hook.
+//
+// The exit code is the contract, not stdout's mere presence: 0 answered (the
+// answer is the whole of stdout), 3 nobody answered in time, 4
+// unreachable/rejected, 5 the question was replaced by a later one before this
+// one was answered - there is only one slot, and if the run's own next tool
+// call raises a relay approval, that approval takes it and no answer to this
+// question is ever coming.
+async function cmdAsk(argv) {
+  const boot = bootstrap(argv);
+  const { cfg, paths } = boot;
+  const question = String(argv._[1] || '').trim();
+  if (!question) {
+    console.error('\n  usage: halyard ask "<question>" [--options "a|b"] [--wait 240]\n');
+    process.exitCode = 1;
+    return;
+  }
+  if (!fs.existsSync(paths.token)) {
+    console.error('\n  halyard ask: no token yet - run: halyard setup\n');
+    process.exitCode = 4;
+    return;
+  }
+  const token = fs.readFileSync(paths.token, 'utf8').trim();
+  // Empty, not the /api/ask route's ['Approve','Deny'] default - that emptiness
+  // is exactly what already makes the phone's UI (and the push notification)
+  // offer a text box instead of two buttons.
+  const options = argv.flags.options
+    ? String(argv.flags.options).split('|').map((s) => s.trim()).filter(Boolean).slice(0, 4)
+    : [];
+  const waitSec = Number(argv.flags.wait) || 240;
+  const client = createClient(cfg, token, { timeoutMs: 10000 });
+
+  let id;
+  try {
+    const res = await client.post('/api/ask', { question, command: '', options });
+    id = res.id;
+  } catch (e) {
+    console.error(`\n  halyard ask: could not reach the bridge (${e.message})\n`);
+    process.exitCode = 4;
+    return;
+  }
+
+  // Never process.exit() from here - the same trap documented at the top of
+  // hooks/permission-relay.js: fetch handles are still open, and exiting from
+  // inside an async function can abort the process before stdout flushes,
+  // eating the very answer this command exists to print. Letting main() return
+  // and process.exitCode do the work is already this file's own pattern.
+  const deadline = Date.now() + waitSec * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const state = await client.tryGet('/api/state');
+    if (!state) continue;
+    if (state.id !== id) {
+      console.error('\n  halyard ask: the question was replaced by another one before it was answered\n');
+      process.exitCode = 5;
+      return;
+    }
+    if (state.status === 'answered') {
+      process.stdout.write(String(state.answer || ''));
+      return;
+    }
+  }
+  console.error(`\n  halyard ask: no answer within ${waitSec}s\n`);
+  process.exitCode = 3;
 }
 
 async function cmdInstallService(argv) {
@@ -392,7 +477,10 @@ function usage() {
     halyard watch                 one watcher pass (for cron / systemd timer)
     halyard doctor                what is configured, reachable and risky
     halyard token [--url]         print the token, or the full link
+    halyard ask "<question>"      block and ask the phone a genuine question
+      [--options "a|b"] [--wait 240]   (for the agent to run mid-turn, not you)
     halyard hook-config           agent hook config for the approve/deny relay
+                                   and the steer hook
     halyard install-service       write a service unit for this OS
 
   Common flags
@@ -415,6 +503,7 @@ async function main() {
     watch: cmdWatch,
     doctor: cmdDoctor,
     token: cmdToken,
+    ask: cmdAsk,
     'hook-config': cmdHookConfig,
     'install-service': cmdInstallService,
     'check-page': cmdCheckPage,
@@ -435,4 +524,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgv, whichSync, cliOverrides };
+module.exports = { parseArgv, whichSync, cliOverrides, cmdAsk };

@@ -117,6 +117,13 @@ const DEFAULTS = {
   // forever; without this bound the run never ends. See watcher.js.
   postExitTimeoutMs: 20 * 1000,
 
+  // --- failover --------------------------------------------------------------
+  // Off by default: a silent reroute to a second engine changes which model
+  // answered your message, and that should be opt-in. `to` names a configured
+  // engine; enabling this with no `to`, or a `to` that names nothing real, is
+  // caught by `audit()` below rather than failing a run at 2am.
+  failover: { enabled: false, to: '' },
+
   // --- safety --------------------------------------------------------------
   relay: {
     // Approve/deny on the phone for mutating git, recursive deletes and
@@ -268,6 +275,12 @@ function audit(cfg) {
     out.push({
       level: 'warn',
       msg: `Engine "${cfg.defaultEngine}" exposes no pre-tool hook, so the relay cannot arm for it. Its runs are unsupervised even though the relay is switched on.`,
+    });
+  }
+  if (cfg.failover && cfg.failover.enabled && !cfg.engines[cfg.failover.to]) {
+    out.push({
+      level: 'warn',
+      msg: `failover.to "${cfg.failover.to}" is not a configured engine, so failover.enabled has no effect.`,
     });
   }
   if (cfg.push && cfg.push.enabled && /you@example\.com/.test(cfg.push.subject || '')) {
