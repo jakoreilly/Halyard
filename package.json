@@ -34,7 +34,7 @@
     "setup": "node bin/halyard.js setup",
     "doctor": "node bin/halyard.js doctor",
     "test": "node test/smoke.js && node test/e2e.js",
-    "check": "node -c src/server.js && node -c src/watcher.js && node -c hooks/permission-relay.js && node bin/halyard.js check-page",
+    "check": "node -c src/server.js && node -c src/watcher.js && node -c hooks/permission-relay.js && node -c hooks/nudge-inject.js && node -c bin/halyard.js && node bin/halyard.js check-page",
     "test:e2e": "node test/e2e.js"
   },
   "repository": {

@@ -178,6 +178,11 @@
     </div>
     <div class="small muted" id="run-activity"></div>
     <div class="small" id="run-draft"></div>
+    <div class="row" id="run-steer-row" style="margin-top:10px">
+      <input class="grow small" id="run-steer" placeholder="Steer this run…">
+      <button class="ghost small" id="run-steer-go">Steer</button>
+    </div>
+    <div class="tiny muted" id="run-steer-note"></div>
   </div>
 </section>
 
@@ -202,6 +207,12 @@
       <button class="ghost" id="failed-dismiss">Dismiss</button>
     </div>
   </div>
+</section>
+
+<!-- pinned -------------------------------------------------------------- -->
+<section id="pinned-box" class="hidden">
+  <h2>Pinned</h2>
+  <div id="pinned"></div>
 </section>
 
 <!-- replies ------------------------------------------------------------- -->
@@ -229,7 +240,20 @@
     </details>
     <details style="margin-top:4px">
       <summary>Artifacts</summary>
+      <div class="row" style="margin:8px 0">
+        <input class="grow tiny" id="art-search" placeholder="Search name or contents…">
+        <button class="ghost tiny" id="art-search-go">Find</button>
+      </div>
+      <ul class="plain" id="art-search-results"></ul>
       <ul class="plain" id="artifacts"></ul>
+      <div class="row" style="margin-top:10px">
+        <span class="tiny muted">Clean up older than</span>
+        <input class="tiny" id="art-prune-days" type="number" min="1" value="30" style="width:5em">
+        <span class="tiny muted">days</span>
+        <button class="ghost tiny" id="art-prune-preview">Preview</button>
+      </div>
+      <ul class="plain" id="art-prune-list"></ul>
+      <button class="danger tiny hidden" id="art-prune-delete" style="margin-top:6px">Delete selected</button>
     </details>
     <details style="margin-top:4px" id="spend-details">
       <summary>Spend (7 days)</summary>
@@ -386,6 +410,7 @@
       'workspace   ' + h.workspace,
       'engine      ' + h.defaultEngine + '   mode ' + h.permissionMode,
       'relay       ' + (h.relay.enabled ? 'on' : 'OFF'),
+      'failover    ' + (h.failover && h.failover.enabled ? 'on -> ' + h.failover.to : 'off'),
       'lock        ' + (h.lock ? 'held ' + Math.round(h.lock.ageMs / 1000) + 's by pid ' + h.lock.pid : 'free'),
       'push        ' + h.push.subscribers + ' subscriber(s)',
       'version     ' + h.version
@@ -422,6 +447,15 @@
     $('run-activity').textContent = run.activity || 'starting…';
     $('run-kill').disabled = !!run.killRequested;
     $('run-kill').textContent = run.killRequested ? 'Stopping…' : 'Stop';
+
+    // Steering needs the same pre-tool hook the relay needs, so it reuses the
+    // relay flag rather than inventing a second per-engine capability field.
+    var e = health && health.engines && health.engines.filter(function (x) { return x.name === run.engine; })[0];
+    $('run-steer-row').classList.toggle('hidden', !(e && e.relay));
+    var pending = (run.nudges || []).length;
+    $('run-steer-note').textContent = !e || e.relay
+      ? (pending ? pending + ' pending, delivered at the next tool call' : '')
+      : 'This engine has no pre-tool hook, so it cannot be steered mid-run.';
   }
 
   function fetchTranscript(engine) {
@@ -448,13 +482,46 @@
     $('failed-msg').textContent = '“' + String(f.message).slice(0, 300) + '”';
   }
 
+  var lastRenderedAskId = null;
   function renderState(s) {
     var pending = s && s.status === 'pending';
     $('ask').classList.toggle('hidden', !pending);
-    if (!pending) return;
+    if (!pending) { lastRenderedAskId = null; return; }
+    // The interval poll re-fires with the SAME still-pending question every
+    // few seconds. Rebuilding the card unconditionally is harmless for
+    // buttons, but for the free-text input below it wipes whatever the user
+    // is mid-typing - composing an answer one-handed taking longer than one
+    // poll cycle is the normal case this exists for, not an edge case. Every
+    // `/api/ask` call mints a fresh id, so the same id always means the same
+    // question/options/command - skipping the rebuild here is always safe.
+    if (s.id === lastRenderedAskId) return;
+    lastRenderedAskId = s.id;
     $('ask-q').textContent = s.question;
     $('ask-cmd').textContent = s.command;
+    $('ask-cmd').classList.toggle('hidden', !s.command);
     $('ask-opts').innerHTML = '';
+    // Empty options is how a free-text question (halyard ask with no
+    // --options) is told apart from an approve/deny-shaped one. Falling
+    // through to a button default here would send the literal word "Approve"
+    // back as the answer to "which of these did you mean?", and the run would
+    // act on it.
+    if (!s.options.length) {
+      var input = document.createElement('input');
+      input.className = 'grow'; input.placeholder = 'Type your answer…';
+      var go = document.createElement('button');
+      go.className = 'primary'; go.textContent = 'Answer';
+      var submit = function () {
+        var text = input.value.trim();
+        if (!text) return;
+        go.disabled = input.disabled = true;
+        post('/api/answer', { id: s.id, answer: text }).then(pollState).catch(function (e) { alert(e.message); go.disabled = input.disabled = false; });
+      };
+      go.onclick = submit;
+      input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
+      $('ask-opts').appendChild(input);
+      $('ask-opts').appendChild(go);
+      return;
+    }
     s.options.forEach(function (opt) {
       var b = document.createElement('button');
       b.textContent = opt;
@@ -464,6 +531,45 @@
         post('/api/answer', { id: s.id, answer: opt }).then(pollState).catch(function (e) { alert(e.message); });
       };
       $('ask-opts').appendChild(b);
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Pinning: a lightweight SNAPSHOT taken at pin time, not just an id. Halyard
+  // already has a durable server-side archive (/api/messages), so unlike a
+  // reply-ring entry a pin does not need to survive by staying findable in it
+  // - it renders straight from what was saved here, so it is still there even
+  // if the archive is unreachable or the original entry has since been
+  // deleted.
+  function pinnedList() { return LS.get('pinned', []); }
+  function isPinned(id) { return pinnedList().some(function (p) { return p.id === id; }); }
+  function pinToggle(n) {
+    var list = pinnedList();
+    list = isPinned(n.id)
+      ? list.filter(function (p) { return p.id !== n.id; })
+      : [{ id: n.id, at: n.at, thread: n.thread, engine: n.engine, model: n.model, message: n.message }].concat(list).slice(0, 50);
+    LS.set('pinned', list);
+    renderPinned();
+  }
+  function renderPinned() {
+    var list = pinnedList();
+    $('pinned-box').classList.toggle('hidden', !list.length);
+    var box = $('pinned');
+    box.innerHTML = '';
+    list.forEach(function (n) {
+      var el = document.createElement('div');
+      el.className = 'reply';
+      var meta = [ago(n.at), n.thread, n.engine, n.model].filter(Boolean);
+      el.innerHTML = '<div class="meta">' + meta.map(esc).join(' · ') + '</div>' +
+        '<div class="text">' + renderRich(n.message) + '</div>';
+      var acts = document.createElement('div');
+      acts.className = 'acts';
+      var ub = document.createElement('button');
+      ub.className = 'ghost'; ub.textContent = 'Unpin';
+      ub.onclick = function () { pinToggle(n); };
+      acts.appendChild(ub);
+      el.appendChild(acts);
+      box.appendChild(el);
     });
   }
 
@@ -493,6 +599,10 @@
         sb.onclick = function () { speak(n.message, sb, function () { sb.textContent = 'Read'; }); };
         acts.appendChild(sb);
       }
+      var pb = document.createElement('button');
+      pb.className = 'ghost'; pb.textContent = isPinned(n.id) ? 'Pinned' : 'Pin';
+      pb.onclick = function () { pinToggle(n); pb.textContent = isPinned(n.id) ? 'Pinned' : 'Pin'; };
+      acts.appendChild(pb);
       var cb = document.createElement('button');
       cb.className = 'ghost'; cb.textContent = 'Copy';
       cb.onclick = function () { navigator.clipboard.writeText(n.message); cb.textContent = 'Copied'; setTimeout(function () { cb.textContent = 'Copy'; }, 1200); };
@@ -514,7 +624,7 @@
   // stream only answers "has anything changed yet?", which is the part a timer
   // answers badly. Every render path and payload shape stays as it was.
 
-  function pollHealth() { return api('/api/health').then(renderHealth).catch(connDown); }
+  function pollHealth() { return api('/api/health').then(function (h) { renderHealth(h); flushOutbox(); }).catch(connDown); }
   function pollState() { return api('/api/state').then(renderState).catch(function () {}); }
   function pollNotifications() { return api('/api/notifications').then(function (r) { renderReplies(r.items); }).catch(function () {}); }
   function pollContext() {
@@ -610,6 +720,46 @@
     return { runAfter: d.getTime(), repeat: m[1] || null };
   }
 
+  // ---------------------------------------------------------------------
+  // Outbox: this bridge is reached over a tunnel from a phone that is
+  // routinely out of coverage, and a send in that state used to just fail -
+  // the text stayed in the box and remembering to press Send again was the
+  // user's problem. A failed send is parked here and flushed automatically;
+  // `clientId` is what makes the flush safe to retry - the server answers a
+  // repeat with the id of the item it already created, so a lost RESPONSE
+  // (as opposed to a lost request) can never queue the same message twice.
+  function newClientId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+
+  function flushOutbox() {
+    var box = LS.get('outbox', []);
+    if (!box.length) return;
+    var chain = Promise.resolve();
+    // Track what got RESOLVED (sent or genuinely refused) by clientId, and
+    // remove only those from a freshly-read outbox at the end - never
+    // overwrite wholesale. This chain can span several sequential round trips,
+    // and `online` + the next health poll routinely fire within the same
+    // second on reconnect; either that overlap or a fresh send() failure
+    // arriving mid-flush would otherwise get clobbered by a stale snapshot.
+    var resolved = [];
+    box.forEach(function (entry) {
+      chain = chain.then(function () {
+        return post('/api/inbox', entry.payload).then(function () {
+          resolved.push(entry.payload.clientId);
+        }).catch(function (e) {
+          // Only a network failure (no HTTP status at all) keeps it queued -
+          // a real refusal from the server is not something retrying fixes.
+          if (e.status !== undefined) resolved.push(entry.payload.clientId);
+        });
+      });
+    });
+    chain.then(function () {
+      if (!resolved.length) return;
+      var current = LS.get('outbox', []);
+      LS.set('outbox', current.filter(function (e) { return resolved.indexOf(e.payload.clientId) === -1; }));
+      pollHealth(); pollScheduled();
+    });
+  }
+
   function send() {
     var text = $('msg').value.trim();
     if (!text) return;
@@ -617,15 +767,30 @@
       message: text,
       thread: thread(),
       engine: $('engine').value,
-      model: $('model').value
+      model: $('model').value,
+      clientId: newClientId()
     }, scheduleSpec($('when').value));
     $('send').disabled = true;
     post('/api/inbox', payload).then(function () {
       $('msg').value = '';
       $('when').value = '';
       pollHealth(); pollScheduled();
-    }).catch(function (e) { alert('Could not queue: ' + e.message); })
-      .finally(function () { $('send').disabled = false; });
+    }).catch(function (e) {
+      if (e.status === undefined) {
+        // No HTTP status at all means the request never reached the server -
+        // the phone is offline or the tunnel is down, not that the message
+        // was refused.
+        var box = LS.get('outbox', []).concat([{ payload: payload, at: Date.now() }]).slice(-20);
+        LS.set('outbox', box);
+        var btn = $('send');
+        var was = btn.textContent;
+        btn.textContent = 'Saved to outbox';
+        setTimeout(function () { btn.textContent = was; }, 1600);
+      } else {
+        if (!$('msg').value.trim()) $('msg').value = text;
+        alert('Could not queue: ' + e.message);
+      }
+    }).finally(function () { $('send').disabled = false; });
   }
 
   function fillEngines() {
@@ -713,6 +878,12 @@
     post('/api/handover/clear', { thread: thread() }).then(pollContext);
   };
   $('run-kill').onclick = function () { post('/api/run/kill').then(pollHealth); };
+  $('run-steer-go').onclick = function () {
+    var text = $('run-steer').value.trim();
+    if (!text) return;
+    post('/api/run/nudge', { text: text }).then(function () { $('run-steer').value = ''; pollHealth(); })
+      .catch(function (e) { alert('Could not steer: ' + e.message); });
+  };
   $('failed-retry').onclick = function () { post('/api/inbox/retry').then(function () { pollHealth(); }); };
   $('failed-dismiss').onclick = function () { post('/api/inbox/dismiss-failed').then(pollHealth); };
   $('scheduled').onclick = function (e) {
@@ -743,6 +914,45 @@
       .then(function (r) { $('log-out').textContent = r.lines.join('\n') || (r.note || 'empty'); })
       .catch(function (e) { $('log-out').textContent = 'error: ' + e.message; });
   };
+  $('art-search-go').onclick = function () {
+    var q = $('art-search').value.trim();
+    var box = $('art-search-results');
+    if (!q) { box.innerHTML = ''; return; }
+    api('/api/artifacts/search?limit=50&q=' + encodeURIComponent(q)).then(function (r) {
+      box.innerHTML = r.items.length ? r.items.map(function (a) {
+        return '<li><a class="grow small" href="/artifacts/' + encodeURIComponent(a.name) + '?token=' + encodeURIComponent(TOKEN) + '" target="_blank" rel="noopener">' + esc(a.name) + '</a></li>' +
+          (a.snippet ? '<li class="tiny muted" style="border-top:0;padding-top:0">…' + esc(a.snippet) + '…</li>' : '');
+      }).join('') : '<li class="muted small">No matches.</li>';
+    }).catch(function (e) { box.innerHTML = '<li class="muted small">search failed: ' + esc(e.message) + '</li>'; });
+  };
+
+  // Read-only preview + delete-what-you-confirm, reusing the existing
+  // per-file DELETE route rather than growing a second deletion code path.
+  $('art-prune-preview').onclick = function () {
+    var days = Number($('art-prune-days').value) || 30;
+    post('/api/artifacts/prune', { days: days }).then(function (r) {
+      var list = $('art-prune-list');
+      list.innerHTML = r.items.length ? r.items.map(function (a) {
+        return '<li><label class="row grow small"><input type="checkbox" checked data-name="' + esc(a.name) + '">' +
+          '<span class="grow">' + esc(a.name) + '</span>' +
+          '<span class="tiny muted">' + Math.max(1, Math.round(a.size / 1024)) + 'kB</span></label></li>';
+      }).join('') : '<li class="muted small">Nothing older than ' + days + ' day(s).</li>';
+      $('art-prune-delete').classList.toggle('hidden', !r.items.length);
+    });
+  };
+  $('art-prune-delete').onclick = function () {
+    var boxes = Array.prototype.slice.call($('art-prune-list').querySelectorAll('input[type=checkbox]:checked'));
+    if (!boxes.length) return;
+    if (!confirm('Delete ' + boxes.length + ' artifact(s)? This cannot be undone.')) return;
+    Promise.all(boxes.map(function (b) {
+      return api('/artifacts/' + encodeURIComponent(b.getAttribute('data-name')), { method: 'DELETE' }).catch(function () {});
+    })).then(function () {
+      $('art-prune-list').innerHTML = '';
+      $('art-prune-delete').classList.add('hidden');
+      pollArtifacts();
+    });
+  };
+
   $('spend-details').addEventListener('toggle', function () {
     if (!this.open) return;
     api('/api/spend?days=7').then(function (s) {
@@ -763,7 +973,7 @@
   // an old worker has no message handler and does not reply at all, so "no
   // answer" and "old worker" look identical from here - a non-answer is never
   // read as "no worker registered".
-  var REQUIRED_SW_VERSION = 1;
+  var REQUIRED_SW_VERSION = 2;
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').then(function (reg) {
       setTimeout(function () {
@@ -779,10 +989,14 @@
     }).catch(function () {});
   }
 
+  window.addEventListener('online', flushOutbox);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) flushOutbox(); });
+
   // Kick off
   $('thread').innerHTML = '<option>' + esc(LS.get('thread', 'main')) + '</option>';
   pollHealth().then(fillEngines);
   pollState(); pollNotifications(); pollContext(); pollArtifacts(); pollScheduled();
+  renderPinned();
   setupPush();
   retime();
   connectStream();

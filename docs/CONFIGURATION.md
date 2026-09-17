@@ -72,6 +72,21 @@ returns.
 | `relay.timeoutMs` | `300000` | No answer inside this window is a **deny**. |
 | `relay.rules` | all three | `git`, `destructive-fs`, `network-egress`. Trim if a category is pure noise for you. An **empty or unset** list means all of them, never none. |
 
+### Failover
+
+| Key | Default | Notes |
+|---|---|---|
+| `failover.enabled` | `false` | Reroute a message to a second engine when the primary one looks unable to answer. Off by default — silently changing which model answered you should be opt-in. |
+| `failover.to` | `""` | Must name a real entry in `engines`. Warned about (never fatal) if it doesn't. |
+
+Triggers on two things only: a silent death (non-zero exit, nothing at all on stderr, no
+reply — consistent with an environment/auth/quota failure that never got as far as writing a
+message) or stderr that reads like a rate limit, quota or auth problem. A user-requested Stop
+or a run that hit its own time budget are neither — those are left to fail and report
+normally. A message that has already hopped once (`rerouted: true`, set by the watcher, never
+by the phone) is never hopped a second time, so two engines that both can't answer it don't
+ping-pong it forever.
+
 ### Delivery
 
 | Key | Default | Notes |
