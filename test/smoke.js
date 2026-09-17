@@ -21,10 +21,12 @@ const configmod = require('../src/config');
 const { createServer, nextOccurrence, isDue } = require('../src/server');
 const { createLogger } = require('../src/log');
 const relay = require('../hooks/permission-relay.js');
+const nudgeInject = require('../hooks/nudge-inject.js');
 const push = require('../src/push');
 const threads = require('../src/threads');
 const engines = require('../src/engines');
 const watcher = require('../src/watcher');
+const halyardBin = require('../bin/halyard.js');
 
 let passed = 0;
 const failures = [];
@@ -144,6 +146,14 @@ check('relay: an attended session is not relayed, an unknown mode is', () => {
   assert.ok(relay.isUnattended({ permission_mode: 'default' }, { HALYARD_HEADLESS: '1' }));
 });
 
+check('nudge-inject: never steals a call the relay would handle', () => {
+  // Denying a call the relay is about to ask about would throw away an
+  // approval that was just tapped and the run would re-ask for the identical
+  // command a moment later. The hook's whole gate is this one check.
+  assert.ok(relay.matchRelayRule('Bash', 'git push --force'), 'sanity: the relay would take this one');
+  assert.strictEqual(typeof nudgeInject.dataDir(), 'string');
+});
+
 check('engines: the claude parser keeps cost, reply and files', () => {
   const r = engines.newResult();
   const parse = engines.parserFor('claude-json');
@@ -224,6 +234,34 @@ check('config: the audit names real exposures', () => {
   assert.ok(/home directory/.test(msgs));
   const safe = configmod.load({ file: null, env: {}, cli: { workspace: path.join(os.tmpdir(), 'ws') } });
   assert.strictEqual(configmod.audit(safe).filter((w) => w.level === 'warn').length, 0);
+});
+
+check('config: failover.to must name a real engine', () => {
+  const bad = configmod.load({ file: null, env: {}, cli: { workspace: path.join(os.tmpdir(), 'ws'), failover: { enabled: true, to: 'nope' } } });
+  assert.ok(/failover\.to "nope" is not a configured engine/.test(configmod.audit(bad).map((w) => w.msg).join(' | ')));
+  const good = configmod.load({ file: null, env: {}, cli: { workspace: path.join(os.tmpdir(), 'ws'), failover: { enabled: true, to: 'copilot' } } });
+  assert.strictEqual(configmod.audit(good).filter((w) => /failover/.test(w.msg)).length, 0);
+});
+
+check('failover: decideReroute only fires on a silent death or a capacity/auth stderr', () => {
+  const cfg = configmod.load({ file: null, env: {}, cli: { workspace: path.join(os.tmpdir(), 'ws'), failover: { enabled: true, to: 'copilot' } } });
+  const item = { message: 'x' };
+  const base = { reply: '', filesChanged: [], commands: [] };
+
+  assert.strictEqual(watcher.decideReroute({ item, cfg, engineName: 'claude', result: { ...base, exitCode: 1, stderr: '' } }).to, 'copilot');
+  assert.strictEqual(watcher.decideReroute({ item, cfg, engineName: 'claude', result: { ...base, exitCode: 1, stderr: 'Error: 429 Too Many Requests' } }).to, 'copilot');
+  // A reply present at all means the engine answered - never reroute a message
+  // that already has an answer.
+  assert.strictEqual(watcher.decideReroute({ item, cfg, engineName: 'claude', result: { ...base, reply: 'done', exitCode: 1, stderr: '' } }), null);
+  // Ordinary failures with real diagnostic text are left to fail and report
+  // normally, not waved off to a second engine.
+  assert.strictEqual(watcher.decideReroute({ item, cfg, engineName: 'claude', result: { ...base, exitCode: 1, stderr: 'TypeError: cannot read x' } }), null);
+  // Already hopped once - must not ping-pong back.
+  assert.strictEqual(watcher.decideReroute({ item: { ...item, rerouted: true }, cfg, engineName: 'claude', result: { ...base, exitCode: 1, stderr: '' } }), null);
+  // Disabled, or routing to an engine that does not exist, or to itself.
+  const off = configmod.load({ file: null, env: {}, cli: { workspace: path.join(os.tmpdir(), 'ws') } });
+  assert.strictEqual(watcher.decideReroute({ item, cfg: off, engineName: 'claude', result: { ...base, exitCode: 1, stderr: '' } }), null);
+  assert.strictEqual(watcher.decideReroute({ item, cfg, engineName: 'copilot', result: { ...base, exitCode: 1, stderr: '' } }), null, 'to === engineName');
 });
 
 check('config: a corrupt config file falls back instead of throwing', () => {
@@ -318,6 +356,13 @@ check('sw.js: nothing token-gated may be precached, and install cannot fail', ()
   // and throw the payload away, so every tap with no tab open hit the 401 page.
   assert.ok(!/data:\s*\{\s*url:\s*['"]\/['"]\s*\}/.test(sw), "the hand-built data:{url:'/'} literal must not come back");
   assert.ok(/data: payload/.test(sw), 'the whole payload must be stored on the notification');
+  // A hardcoded Approve/Deny button pair would ignore whatever real options
+  // /api/ask was actually given (a free-text `halyard ask` sends none at all).
+  assert.ok(!/action:\s*['"]approve['"]/.test(sw), 'action buttons must be built from payload.actions, not hardcoded');
+  assert.ok(sw.includes('opt${i}'), 'action ids must be derived from the real option list, not hardcoded ones');
+  // Answering an `ask` must go to /api/answer, never /api/inbox - the latter
+  // would silently start an unrelated new conversation turn.
+  assert.ok(/data\.kind === ['"]ask['"]/.test(sw), "a free-text reply to an ask must be told apart from an ordinary reply notification");
 });
 
 check('index.html: the inline script parses', () => {
@@ -329,6 +374,10 @@ check('index.html: the inline script parses', () => {
   }
   // The page must escape before it re-adds markup.
   assert.ok(/function esc\(/.test(scripts.join('')), 'renderRich must escape first');
+  const src = scripts.join('');
+  assert.ok(/function pinToggle\(/.test(src) && /function renderPinned\(/.test(src), 'pin/unpin must be wired');
+  assert.ok(/newClientId\(\)/.test(src), 'a queued message must carry a clientId for the outbox to de-dupe on retry');
+  assert.ok(/function flushOutbox\(/.test(src), 'the outbox must be flushed somewhere');
 });
 
 // ---------------------------------------------------------------------------
@@ -397,6 +446,22 @@ async function main() {
     assert.strictEqual((await call('POST', '/api/inbox/pop')).body.item, null);
   }));
 
+  await checkAsync('outbox: a repeated clientId returns the ORIGINAL item, never a duplicate', () => withServer(async ({ call, paths }) => {
+    const first = await call('POST', '/api/inbox', { message: 'retry me', clientId: 'device-abc' });
+    const second = await call('POST', '/api/inbox', { message: 'retry me', clientId: 'device-abc' });
+    assert.strictEqual(second.body.id, first.body.id, 'the phone is asking "did this land?" - the true answer is yes');
+    assert.strictEqual((await call('GET', '/api/health')).body.queued, 1, 'must not create a second item');
+    // Persisted, because a restart between a phone's send and its retry is
+    // exactly the window that matters.
+    const saved = JSON.parse(fs.readFileSync(paths.state, 'utf8'));
+    assert.ok(saved.recentClients.some((c) => c.clientId === 'device-abc'));
+    // No clientId at all is never de-duped - every caller that predates the
+    // outbox sends none.
+    await call('POST', '/api/inbox', { message: 'no client id one' });
+    await call('POST', '/api/inbox', { message: 'no client id one' });
+    assert.strictEqual((await call('GET', '/api/health')).body.queued, 3);
+  }));
+
   await checkAsync('queue: a deferred message never blocks the ones behind it', () => withServer(async ({ call }) => {
     await call('POST', '/api/inbox', { message: 'later', runAfter: Date.now() + 3600e3 });
     await call('POST', '/api/inbox', { message: 'now' });
@@ -418,6 +483,16 @@ async function main() {
     assert.strictEqual(sched.length, 1);
     assert.ok(sched[0].runAfter > Date.now());
     assert.notStrictEqual(sched[0].id, popped.body.item.id);
+  }));
+
+  await checkAsync('failover: rerouted survives the queue, and health reports the config', () => withServer(async ({ call, cfg }) => {
+    assert.deepStrictEqual((await call('GET', '/api/health')).body.failover, { enabled: false, to: '' });
+    await call('POST', '/api/inbox', { message: 'hopped once', engine: cfg.defaultEngine, rerouted: true });
+    const item = (await call('POST', '/api/inbox/pop')).body.item;
+    assert.strictEqual(item.rerouted, true);
+    await call('POST', '/api/inbox', { message: 'never rerouted' });
+    const plain = (await call('POST', '/api/inbox/pop')).body.item;
+    assert.strictEqual(plain.rerouted, false);
   }));
 
   await checkAsync('queue: runAfter is clamped server-side', () => withServer(async ({ call }) => {
@@ -444,6 +519,17 @@ async function main() {
     // "That question is no longer current" is the likely failure for a
     // notification tap, and the worker calls the 409 out by name.
     assert.strictEqual((await call('POST', '/api/answer', { id, answer: 'Deny' })).status, 409);
+  }));
+
+  await checkAsync('ask/answer: empty options is free-text, not defaulted to Approve/Deny', () => withServer(async ({ call }) => {
+    // `halyard ask` with no --options sends an explicit empty array. Array.isArray([])
+    // is true, so this must stay [] rather than falling into the ['Approve','Deny']
+    // default meant for the relay - that default is what would send the literal
+    // word "Approve" back as the answer to a free-text question.
+    const { id } = (await call('POST', '/api/ask', { question: 'Which file did you mean?', options: [] })).body;
+    assert.deepStrictEqual((await call('GET', '/api/state')).body.options, []);
+    await call('POST', '/api/answer', { id, answer: 'the one in src/' });
+    assert.strictEqual((await call('GET', '/api/state')).body.answer, 'the one in src/');
   }));
 
   await checkAsync('notify: archived durably, and the ledger skips internal notices', () => withServer(async ({ call, paths }) => {
@@ -523,6 +609,55 @@ async function main() {
     assert.strictEqual((await call('GET', '/api/artifacts')).body.items.length, 0);
   }));
 
+  await checkAsync('artifacts: search matches filenames always, contents for a text allow-list', () => withServer(async ({ call, paths }) => {
+    fs.writeFileSync(path.join(paths.artifacts, 'weekly-report.html'), '<h1>nothing interesting here</h1>');
+    fs.writeFileSync(path.join(paths.artifacts, 'notes.md'), 'the needle is buried in here somewhere');
+    fs.writeFileSync(path.join(paths.artifacts, 'photo.png'), Buffer.from([0, 1, 2]));
+    const byName = (await call('GET', '/api/artifacts/search?q=weekly')).body;
+    assert.strictEqual(byName.items.length, 1);
+    assert.strictEqual(byName.items[0].name, 'weekly-report.html');
+    const byContent = (await call('GET', '/api/artifacts/search?q=needle')).body;
+    assert.strictEqual(byContent.items.length, 1);
+    assert.strictEqual(byContent.items[0].name, 'notes.md');
+    assert.ok(byContent.items[0].snippet.includes('needle'));
+    // A binary file is never grepped, even if its bytes happened to contain
+    // the query - only the text-extension allow-list is searched by content.
+    const none = (await call('GET', '/api/artifacts/search?q=' + encodeURIComponent(String.fromCharCode(1)))).body;
+    assert.strictEqual(none.items.length, 0);
+  }));
+
+  await checkAsync('artifacts: prune previews candidates and deletes nothing', () => withServer(async ({ call, paths }) => {
+    const oldFile = path.join(paths.artifacts, 'old.html');
+    const newFile = path.join(paths.artifacts, 'new.html');
+    fs.writeFileSync(oldFile, 'old');
+    fs.writeFileSync(newFile, 'new');
+    const old = Date.now() - 60 * 86400 * 1000;
+    fs.utimesSync(oldFile, old / 1000, old / 1000);
+    const r = (await call('POST', '/api/artifacts/prune', { days: 30 })).body;
+    assert.strictEqual(r.items.length, 1);
+    assert.strictEqual(r.items[0].name, 'old.html');
+    // Read-only: the route must not have deleted anything itself.
+    assert.strictEqual((await call('GET', '/api/artifacts')).body.items.length, 2);
+  }));
+
+  await checkAsync('artifacts: an HTML page gets the read-aloud bar, other files do not', () => withServer(async ({ base, token, paths }) => {
+    fs.writeFileSync(path.join(paths.artifacts, 'report.html'), '<html><body><h1>hi</h1></body></html>');
+    const withReader = await (await fetch(`${base}/artifacts/report.html?token=${token}`)).text();
+    assert.ok(withReader.includes('id="halyard-reader"'));
+    assert.ok(withReader.indexOf('id="halyard-reader"') < withReader.indexOf('</body>'), 'must land before </body>');
+
+    // A page that already ships its own reader is left exactly as it is.
+    fs.writeFileSync(path.join(paths.artifacts, 'own-reader.html'), '<html><body><div id="halyard-reader">mine</div></body></html>');
+    const own = await (await fetch(`${base}/artifacts/own-reader.html?token=${token}`)).text();
+    assert.strictEqual((own.match(/id="halyard-reader"/g) || []).length, 1, 'must not double up');
+    assert.ok(own.includes('>mine<'));
+
+    // Non-HTML artifacts are untouched, byte for byte.
+    fs.writeFileSync(path.join(paths.artifacts, 'notes.txt'), 'plain text, not html');
+    const txt = await (await fetch(`${base}/artifacts/notes.txt?token=${token}`)).text();
+    assert.strictEqual(txt, 'plain text, not html');
+  }));
+
   await checkAsync('threads: a traversal-shaped name lands inside the thread dir', () => withServer(async ({ call, paths, dir }) => {
     await call('POST', '/api/inbox', { message: 'x', thread: '../../escape' });
     const item = (await call('POST', '/api/inbox/pop')).body.item;
@@ -576,6 +711,49 @@ async function main() {
     // health is refetched on every activity bump.
     assert.ok(!JSON.stringify(h).includes('prose only'));
     assert.ok(h.transcript.claude.seq > 0);
+  }));
+
+  await checkAsync('nudge: queued only while a run is active, and consumed once', () => withServer(async ({ call }) => {
+    // A steer aimed at a run that has finished is a different message with none
+    // of that run's context - the phone sends it as a fresh one instead.
+    assert.strictEqual((await call('POST', '/api/run/nudge', { text: 'also check the logs' })).status, 404);
+    await call('POST', '/api/run/start', { runId: 'r1', engine: 'claude', thread: 'main', message: 'go' });
+    assert.strictEqual((await call('POST', '/api/run/nudge', { text: 'also check the logs' })).status, 200);
+    // A peek (no consume) must not remove it - only the hook that actually
+    // delivers it gets to consume.
+    assert.strictEqual((await call('GET', '/api/run/nudge')).body.text, 'also check the logs');
+    assert.strictEqual((await call('GET', '/api/run/nudge')).body.text, 'also check the logs');
+    assert.strictEqual((await call('GET', '/api/run/nudge?consume=1')).body.text, 'also check the logs');
+    assert.strictEqual((await call('GET', '/api/run/nudge?consume=1')).body.text, null, 'consumed once, then gone');
+  }));
+
+  await checkAsync('nudge: capped at 5 pending, oldest dropped first', () => withServer(async ({ call }) => {
+    await call('POST', '/api/run/start', { runId: 'r1', engine: 'claude', thread: 'main', message: 'go' });
+    for (let i = 0; i < 8; i++) await call('POST', '/api/run/nudge', { text: `n${i}` });
+    const h = (await call('GET', '/api/health')).body;
+    assert.deepStrictEqual(h.activeRun.nudges, ['n3', 'n4', 'n5', 'n6', 'n7']);
+  }));
+
+  await checkAsync('halyard ask: blocks until answered, prints exactly the answer', () => withServer(async ({ call, base, token, paths, dir }) => {
+    fs.writeFileSync(paths.token, token);
+    const origWrite = process.stdout.write;
+    let out = '';
+    process.stdout.write = (chunk) => { out += chunk; return true; };
+    let promise;
+    try {
+      promise = halyardBin.cmdAsk({ _: ['ask', 'pick a or b'], flags: { 'data-dir': dir, port: new URL(base).port, options: 'a|b', wait: 8 } });
+      // Give the command a moment to POST /api/ask before we look for it.
+      await new Promise((r) => setTimeout(r, 200));
+      const pending = (await call('GET', '/api/state')).body;
+      assert.strictEqual(pending.status, 'pending');
+      assert.deepStrictEqual(pending.options, ['a', 'b']);
+      await call('POST', '/api/answer', { id: pending.id, answer: 'a' });
+      await promise;
+    } finally {
+      process.stdout.write = origWrite;
+    }
+    assert.strictEqual(out, 'a', 'stdout must be exactly the answer, nothing else');
+    assert.strictEqual(process.exitCode, undefined);
   }));
 
   await checkAsync('a run is not persisted across a restart', () => withServer(async ({ call, paths }) => {

@@ -20,7 +20,7 @@
 //      individually with its own catch.
 //   3. SW_VERSION and the page's REQUIRED_SW_VERSION are bumped together.
 
-const SW_VERSION = 1;
+const SW_VERSION = 2;
 const CACHE = `halyard-shell-v${SW_VERSION}`;
 
 // Token-free URLs only. /manifest.json bakes the token into start_url and is
@@ -60,8 +60,15 @@ self.addEventListener('push', (event) => {
   // hand and threw the payload away - so the tokened URL the server has always
   // sent for exactly this purpose never reached notificationclick, and every
   // tap with no tab open landed on the 401 page.
-  const actions = payload.kind === 'ask'
-    ? [{ action: 'approve', title: 'Approve' }, { action: 'deny', title: 'Deny' }]
+  //
+  // Built from the REAL options the caller gave `/api/ask` (up to 2 shown as
+  // buttons - most platforms cap notification actions there), never a
+  // hardcoded Approve/Deny. A free-text question passes an empty options array
+  // on purpose (see `halyard ask`), which is what falls through to the text
+  // box below rather than showing buttons that do not apply to it.
+  const askOptions = Array.isArray(payload.actions) ? payload.actions.filter(Boolean).slice(0, 2) : [];
+  const actions = payload.kind === 'ask' && askOptions.length
+    ? askOptions.map((label, i) => ({ action: `opt${i}`, title: String(label) }))
     : [{ action: 'reply', title: 'Reply', type: 'text', placeholder: 'Reply…' }];
 
   event.waitUntil(self.registration.showNotification(payload.title || 'Halyard', {
@@ -100,15 +107,36 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil((async () => {
     const q = `?token=${encodeURIComponent(token)}`;
 
-    if (action === 'approve' || action === 'deny') {
+    const optMatch = /^opt(\d)$/.exec(action || '');
+    if (optMatch) {
+      const label = Array.isArray(data.actions) ? data.actions[Number(optMatch[1])] : null;
       try {
         const res = await fetch(`/api/answer${q}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id: data.id, answer: action === 'approve' ? 'Approve' : 'Deny' }),
+          body: JSON.stringify({ id: data.id, answer: label || action }),
         });
         if (res.status === 409) return report('That question is no longer current.');
-        return report(res.ok ? `Sent: ${action}` : `Failed (${res.status}).`);
+        return report(res.ok ? `Sent: ${label || action}` : `Failed (${res.status}).`);
+      } catch (e) {
+        return report('Could not reach Halyard.');
+      }
+    }
+
+    // A free-text reply answers two different things depending on kind, and
+    // sending it to the wrong one is worse than not sending it at all: for an
+    // `ask` it must land on /api/answer (the one pending question this device
+    // is looking at), never /api/inbox (which would start an unrelated new
+    // conversation turn wearing the same clothes as an answer).
+    if (action === 'reply' && event.reply && data.kind === 'ask') {
+      try {
+        const res = await fetch(`/api/answer${q}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id: data.id, answer: event.reply }),
+        });
+        if (res.status === 409) return report('That question is no longer current.');
+        return report(res.ok ? 'Sent.' : `Failed (${res.status}).`);
       } catch (e) {
         return report('Could not reach Halyard.');
       }
