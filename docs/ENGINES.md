@@ -142,6 +142,12 @@ can attach to. Set it honestly. It is not cosmetic:
 An engine marked `true` that has no such hook is a bridge that claims a backstop it does not
 have, which is worse than one that admits it has none.
 
+The same flag also gates **steering** (`halyard hook-config`'s second, `matcher: "*"` hook,
+`hooks/nudge-inject.js`): parking a short instruction on a run in flight and having it
+delivered at the run's next tool-call boundary needs the identical pre-tool hook mechanism the
+relay does. An engine with `supportsRelayHook: false` shows no steer box on the phone, for the
+same reason it shows no relay backstop.
+
 ## Testing yours
 
 `test/e2e.js` registers a fake engine as pure config and drives the whole loop against it —

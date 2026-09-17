@@ -187,6 +187,11 @@ function createServer(ctx) {
     current: null,
     activeRun: null,
     transcripts: {},
+    // {clientId, itemId, at}, capped at 200. Persisted alongside the queue - a
+    // restart between a phone's send and its retry is exactly the window that
+    // matters, since that is when a lost RESPONSE (as opposed to a lost
+    // request) is most likely.
+    recentClients: [],
   };
 
   function loadState() {
@@ -195,6 +200,7 @@ function createServer(ctx) {
       if (Array.isArray(raw.inbox)) state.inbox = raw.inbox;
       if (Array.isArray(raw.notifications)) state.notifications = raw.notifications;
       if (raw.lastFailed) state.lastFailed = raw.lastFailed;
+      if (Array.isArray(raw.recentClients)) state.recentClients = raw.recentClients;
       log.info(`restored ${state.inbox.length} queued, ${state.notifications.length} replies`);
     } catch (e) {
       // A corrupt state file is logged and skipped, never fatal. An unreachable
@@ -214,6 +220,7 @@ function createServer(ctx) {
         inbox: state.inbox,
         notifications: state.notifications,
         lastFailed: state.lastFailed,
+        recentClients: state.recentClients,
       }));
     } catch (e) {
       log.error(`could not persist state: ${e.message}`);
@@ -387,6 +394,17 @@ function createServer(ctx) {
     const message = clampStr(body.message, 100000).trim();
     if (!message) return json(res, 400, { error: 'message is required' });
 
+    // A phone on a flaky tunnel is asking "did this land?" when it retries
+    // with the same clientId after a lost RESPONSE - the true answer is yes,
+    // and creating a second item would be the worst outcome an offline-retry
+    // feature could have. Messages with no clientId (every caller that
+    // predates the outbox) are never de-duped.
+    const clientId = clampStr(body.clientId, 64);
+    if (clientId) {
+      const existing = state.recentClients.find((c) => c.clientId === clientId);
+      if (existing) return json(res, 200, { ok: true, id: existing.itemId, queued: state.inbox.length });
+    }
+
     const item = {
       id: newId(),
       at: Date.now(),
@@ -400,8 +418,17 @@ function createServer(ctx) {
         ? clampInt(body.runAfter, Date.now(), Date.now() + MAX_DEFER_MS, 0) || null
         : null,
       repeat: REPEATS.has(body.repeat) ? body.repeat : null,
+      // Set only by the watcher's own failover reroute (src/watcher.js
+      // decideReroute), never by the phone. Marks that this message has
+      // already hopped engines once, so two engines that both fail on it
+      // cannot ping-pong it back and forth forever.
+      rerouted: !!body.rerouted,
     };
     if (body.front) state.inbox.unshift(item); else state.inbox.push(item);
+    if (clientId) {
+      state.recentClients.push({ clientId, itemId: item.id, at: Date.now() });
+      state.recentClients = state.recentClients.slice(-200);
+    }
     saveState();
     log.info(`queued ${item.id}`, { thread: item.thread, engine: item.engine });
     ctx.nudge();
@@ -627,6 +654,10 @@ function createServer(ctx) {
       startedAt: Date.now(),
       activity: '',
       killRequested: false,
+      // A short instruction the phone parks on the live run, delivered at its
+      // next tool-call boundary by hooks/nudge-inject.js. Capped at 5 so a
+      // steer box left open all run cannot build an unbounded backlog.
+      nudges: [],
     };
     const t = transcriptFor(state.activeRun.engine);
     t.runId = state.activeRun.runId;
@@ -678,6 +709,31 @@ function createServer(ctx) {
       // finished reply reads as part of it.
       draft: state.activeRun ? t.draft : '',
     });
+  });
+
+  // A steer aimed at a run that has finished is a different instruction with
+  // none of that run's context; the phone sends it as a fresh message instead,
+  // so this is a 404, never a queued message of its own.
+  route('POST', '/api/run/nudge', async (req, res) => {
+    if (!state.activeRun) return json(res, 404, { error: 'no active run' });
+    const b = await readJson(req);
+    const text = clampStr(b.text, 500).trim();
+    if (!text) return json(res, 400, { error: 'text is required' });
+    state.activeRun.nudges.push(text);
+    state.activeRun.nudges = state.activeRun.nudges.slice(-5);
+    bump('health');
+    return json(res, 200, { ok: true, pending: state.activeRun.nudges.length });
+  });
+
+  // Delivery happens at a tool-call boundary (see hooks/nudge-inject.js), so
+  // `consume` clears it server-side in the same request - the hook has no
+  // second call to acknowledge with, and a nudge left standing would deny
+  // every remaining tool call in the run.
+  route('GET', '/api/run/nudge', async (req, res, url) => {
+    if (!state.activeRun || !state.activeRun.nudges.length) return json(res, 200, { text: null });
+    const text = url.searchParams.get('consume') ? state.activeRun.nudges.shift() : state.activeRun.nudges[0];
+    if (url.searchParams.get('consume')) bump('health');
+    return json(res, 200, { text });
   });
 
   route('POST', '/api/run/kill', async (req, res) => {
@@ -750,6 +806,72 @@ function createServer(ctx) {
     return json(res, 200, { items });
   });
 
+  // Filename match always; content match only for a small text-extension
+  // allow-list, and only the first 256KB of each file - same bound already
+  // established by /api/logs, for the same reason: reading one whole file on
+  // a phone request is how a diagnostic tool becomes the problem it opened to
+  // diagnose.
+  const SEARCHABLE_EXTS = new Set(['.html', '.htm', '.md', '.txt', '.json', '.csv']);
+  const ARTIFACT_SEARCH_BYTES = 256 * 1024;
+
+  route('GET', '/api/artifacts/search', async (req, res, url) => {
+    const q = (url.searchParams.get('q') || '').toLowerCase();
+    const limit = clampInt(url.searchParams.get('limit'), 1, 200, 50);
+    let names = [];
+    try { names = fs.readdirSync(paths.artifacts); } catch (e) { names = []; }
+    const items = [];
+    for (const name of names) {
+      const full = path.join(paths.artifacts, name);
+      let st;
+      try { st = fs.statSync(full); } catch (e) { continue; }
+      if (!st.isFile()) continue;
+      let snippet = '';
+      let matched = !q || name.toLowerCase().includes(q);
+      if (!matched && q && SEARCHABLE_EXTS.has(path.extname(name).toLowerCase())) {
+        try {
+          const fd = fs.openSync(full, 'r');
+          const want = Math.min(st.size, ARTIFACT_SEARCH_BYTES);
+          const buf = Buffer.alloc(want);
+          fs.readSync(fd, buf, 0, want, 0);
+          fs.closeSync(fd);
+          const text = buf.toString('utf8');
+          const idx = text.toLowerCase().indexOf(q);
+          if (idx !== -1) {
+            matched = true;
+            snippet = text.slice(Math.max(0, idx - 60), idx + q.length + 60).replace(/\s+/g, ' ').trim();
+          }
+        } catch (e) { /* unreadable - filename match only */ }
+      }
+      if (matched) items.push({ name, size: st.size, at: st.mtimeMs, snippet });
+    }
+    items.sort((a, b) => b.at - a.at);
+    return json(res, 200, { items: items.slice(0, limit), total: items.length });
+  });
+
+  // Read-only by design: this lists candidates, it does not delete anything.
+  // Halyard already has a tested, containment-checked DELETE /artifacts/<name>
+  // route - the phone loops that for whatever it confirms, instead of this
+  // route growing a second deletion code path (and a keep-list to go with it)
+  // to get wrong.
+  route('POST', '/api/artifacts/prune', async (req, res) => {
+    const body = await readJson(req);
+    const days = clampInt(body.days, 1, 3650, 30);
+    const cutoff = Date.now() - days * 86400 * 1000;
+    let items = [];
+    try {
+      items = fs.readdirSync(paths.artifacts)
+        .map((name) => {
+          const st = fs.statSync(path.join(paths.artifacts, name));
+          return { name, size: st.size, at: st.mtimeMs };
+        })
+        .filter((f) => f.at < cutoff)
+        .sort((a, b) => a.at - b.at);
+    } catch (e) {
+      items = [];
+    }
+    return json(res, 200, { days, items });
+  });
+
   // --- health ------------------------------------------------------------
 
   route('GET', '/api/health', async (req, res) => {
@@ -775,6 +897,7 @@ function createServer(ctx) {
       workspace: cfg.workspace,
       permissionMode: cfg.permissionMode,
       relay: { enabled: !!(cfg.relay && cfg.relay.enabled) },
+      failover: { enabled: !!(cfg.failover && cfg.failover.enabled), to: (cfg.failover && cfg.failover.to) || '' },
       lock: lockmod.inspect(paths.lockDir, 'watch'),
       warnings: ctx.warnings,
       push: { available: !!ctx.pushKeys(), subscribers: ctx.pushSubs().length },
@@ -871,6 +994,96 @@ function createServer(ctx) {
     '.txt': 'text/plain; charset=utf-8',
   };
 
+  // A small, dependency-free read-aloud bar spliced into every generated HTML
+  // artifact. This gets checked one-handed while walking, and a
+  // four-paragraph report is the case where a screen is the wrong output
+  // device. `id="halyard-reader"` is the opt-out marker: a page that already
+  // defines its own reader (or is hand-authored and doesn't want one) is left
+  // exactly as it is.
+  const ARTIFACT_READER_SNIPPET = `
+<div id="halyard-reader" style="position:fixed;left:0;right:0;bottom:0;z-index:999;display:flex;align-items:center;gap:8px;padding:8px 12px;background:#161b23;color:#e6edf3;border-top:1px solid #2a323f;font:13px -apple-system,system-ui,sans-serif">
+  <button id="hr-play" style="background:#5eb3ff;color:#06121f;border:0;border-radius:8px;padding:6px 10px;font-weight:600;cursor:pointer">Read aloud</button>
+  <button id="hr-stop" style="background:transparent;color:#e6edf3;border:1px solid #2a323f;border-radius:8px;padding:6px 10px;cursor:pointer;display:none">Stop</button>
+  <button id="hr-speed" style="background:transparent;color:#93a1b3;border:1px solid #2a323f;border-radius:8px;padding:6px 8px;cursor:pointer">1x</button>
+  <span id="hr-status" style="color:#93a1b3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+</div>
+<script>
+(function () {
+  if (!window.speechSynthesis) return;
+  var root = document.querySelector('main, article, body');
+  var raw = (root.innerText || root.textContent || '').replace(/\\s+/g, ' ').trim();
+  var chunks = raw.match(/[\\s\\S]{1,600}(?:[.!?]\\s|$)/g) || [raw];
+  var idx = 0, speaking = false;
+  var RATES = [1, 1.25, 1.5, 0.75];
+  function rate() { try { return JSON.parse(localStorage.getItem('halyard.speakRate') || '1'); } catch (e) { return 1; }
+  }
+  function setRate(r) { try { localStorage.setItem('halyard.speakRate', JSON.stringify(r)); } catch (e) {} document.getElementById('hr-speed').textContent = r + 'x'; }
+  setRate(rate());
+  function say(i) {
+    if (i < 0 || i >= chunks.length) { stop(); return; }
+    idx = i;
+    document.getElementById('hr-status').textContent = 'Reading ' + (idx + 1) + ' / ' + chunks.length;
+    var u = new SpeechSynthesisUtterance(chunks[idx]);
+    u.rate = rate();
+    u.onend = function () { if (speaking) say(idx + 1); };
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+  function stop() {
+    speaking = false;
+    speechSynthesis.cancel();
+    document.getElementById('hr-play').style.display = '';
+    document.getElementById('hr-stop').style.display = 'none';
+    document.getElementById('hr-status').textContent = '';
+  }
+  document.getElementById('hr-play').onclick = function () {
+    speaking = true;
+    this.style.display = 'none';
+    document.getElementById('hr-stop').style.display = '';
+    say(idx);
+  };
+  document.getElementById('hr-stop').onclick = stop;
+  document.getElementById('hr-speed').onclick = function () {
+    setRate(RATES[(RATES.indexOf(rate()) + 1) % RATES.length]);
+    if (speaking) say(idx);
+  };
+})();
+</script>
+`;
+
+  function injectReader(html) {
+    if (/id=["']halyard-reader["']/i.test(html)) return html;
+    const i = html.search(/<\/body>/i);
+    return i === -1 ? html + ARTIFACT_READER_SNIPPET : html.slice(0, i) + ARTIFACT_READER_SNIPPET + html.slice(i);
+  }
+
+  // Only .html/.htm artifacts get the read-aloud bar; everything else (PDFs,
+  // images, plain data files) keeps streaming through sendFile unchanged -
+  // reading a whole file into memory to string-splice it is only worth it for
+  // the one format that can actually hold the snippet.
+  const MAX_INJECT_BYTES = 8 * 1024 * 1024;
+
+  function sendArtifactHtml(res, file) {
+    let st;
+    try { st = fs.statSync(file); } catch (e) { return json(res, 404, { error: 'not found' }); }
+    // Above this, splicing in memory means a synchronous multi-megabyte read
+    // and concat on the server's one thread - the read-aloud bar is a
+    // convenience and must never be the reason every other request (the SSE
+    // stream, an active run's poll) stalls behind it. Just stream a file this
+    // large, same as every non-HTML artifact already does.
+    if (st.size > MAX_INJECT_BYTES) return sendFile(res, file, { cache: 'no-store' });
+    let html;
+    try { html = fs.readFileSync(file, 'utf8'); } catch (e) { return json(res, 404, { error: 'not found' }); }
+    const out = injectReader(html);
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'content-length': Buffer.byteLength(out),
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    res.end(out);
+  }
+
   function sendFile(res, file, { download = false, cache = 'no-cache' } = {}) {
     let st;
     try { st = fs.statSync(file); } catch (e) { return json(res, 404, { error: 'not found' }); }
@@ -938,6 +1151,7 @@ function createServer(ctx) {
           bump('artifacts');
           return json(res, 200, { ok: true });
         }
+        if (['.html', '.htm'].includes(path.extname(file).toLowerCase())) return sendArtifactHtml(res, file);
         return sendFile(res, file, { cache: 'no-store' });
       }
 
