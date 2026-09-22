@@ -3,311 +3,668 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0e1116">
-<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#fbfbf9" id="theme-color">
+<meta name="color-scheme" content="light dark">
 <title>Halyard</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <style>
+  /* ===================================================================
+     Tokens.
+
+     The page is a working document, not a dashboard: one surface, rules
+     and space instead of nested rounded cards, and chromatic ink spent
+     only where it carries a meaning (a verdict, or a series inside a
+     chart frame). Two consequences worth stating, because both are easy
+     to undo by accident:
+
+       - The neutrals are a warm off-white and a neutral near-black.
+         Not #fff (which flares under near-black ink on a page made of
+         hairlines) and not blue-black, which reads as stock.
+       - Colour is never the only channel. Every status also carries a
+         shape - a 2px bar, a ring, a repeated word - so it survives a
+         mono printout and colour-blind reading.
+
+     Theme-INDEPENDENT scale first, so "slightly rounder" is one edit.
+     =================================================================== */
   :root {
-    --bg: #0e1116;
-    --panel: #161b23;
-    --panel-2: #1d232d;
-    --line: #2a323f;
-    --text: #e6edf3;
-    --muted: #93a1b3;
-    --accent: #5eb3ff;
-    --accent-dim: #1d3a56;
-    --good: #52d18b;
-    --warn: #f0b429;
-    --bad: #ff6b6b;
-    --radius: 14px;
-    --pad: 14px;
+    --r-sm: 3px; --r-md: 5px; --r-lg: 9px; --r-xl: 14px;
+    --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 18px; --s-5: 26px; --s-6: 38px; --s-7: 56px;
+    --ease: cubic-bezier(.22,.61,.36,1); --dur: .14s; --ring: 2px;
+    --mono-face: ui-monospace, "Cascadia Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    /* Lead with system-ui, then the platform's best CURRENT face (on
+       Windows 11 that is Segoe UI Variable Text, visibly better drawn
+       than plain Segoe UI), then the legacy stack underneath so nothing
+       regresses on an older OS. */
+    --sans-face: system-ui, "Segoe UI Variable Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    /* A sticky offset is a measurement, not a preference. The page
+       measures the real bar and writes this back at runtime; the value
+       here is only what the first paint uses. */
+    --bar-h: 96px;
+    /* Likewise the fixed compose bar's height: the page's bottom padding
+       is what stops it covering the last section, and a guess here hides
+       content with nothing on screen to say so. */
+    --compose-h: 128px;
   }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #f6f8fa; --panel: #ffffff; --panel-2: #eef2f6; --line: #d8dee6;
-      --text: #1b2430; --muted: #5b6878; --accent: #0a66c2; --accent-dim: #dbeafe;
+
+  /* LIGHT is the base. */
+  :root {
+    --bg: #fbfbf9; --panel-2: #f4f4f1; --panel-3: #eceae5;
+    --ink: #17181a; --ink-2: #3d3f43; --sub: #6a6d73;
+    --line: #e3e2de; --rule: #ecebe7; --hair: #d6d5d0;
+    --accent: #3f52a8; --accent-dim: rgba(63,82,168,.08);
+    --good: #2f6f4f; --watch: #8a6516; --poor: #a3382b; --unknown: #71747a;
+    --shadow: 0 16px 40px -14px rgba(23,24,26,.20), 0 1px 3px rgba(23,24,26,.07);
+    --lift: 0 1px 2px rgba(23,24,26,.05);
+    --glass: rgba(251,251,249,.85);
+    --c-grid: #eae9e4; --c-axis: #d2d1cc; --c-ref: #6a6d73;
+    /* Sequential single-hue, light page: a magnitude differs in POSITION,
+       not in kind, so the hue must not change across it. */
+    --seq-1: #ccd4ee; --seq-2: #b4bee5; --seq-3: #9aa7db; --seq-4: #8090cf;
+    --seq-5: #6777c0; --seq-6: #5060a6; --seq-7: #3b4a85; --seq-8: #2a3363;
+    /* Categorical, for a series inside a chart frame that has no other way
+       to identify itself. Okabe-Ito derived, so it survives deuteranopia,
+       protanopia and tritanopia. Kept PERMANENTLY apart from the status
+       inks above: a categorical hue never means a verdict, and a verdict
+       ink is never borrowed as "series four". */
+    --c-1: #3f52a8; --c-2: #a76a12; --c-3: #10796a; --c-4: #b4453a;
+    --c-5: #6b4ca8; --c-6: #16708f; --c-7: #a33c79; --c-8: #5e7420;
+  }
+  /* The media query must be GUARDED, or it re-darkens a page the reader
+     explicitly set to light on an OS in dark mode, and the control then
+     looks broken. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1011; --panel-2: #17181a; --panel-3: #1d1e21;
+      --ink: #e8e7e4; --ink-2: #c3c2bf; --sub: #8d8d94;
+      --line: #26262b; --rule: #1e1e22; --hair: #2f3036;
+      --accent: #8fa0e2; --accent-dim: rgba(143,160,226,.13);
+      --good: #63b98d; --watch: #cfa457; --poor: #e0857b; --unknown: #8b8f99;
+      --shadow: 0 18px 48px -12px rgba(0,0,0,.72), 0 2px 8px rgba(0,0,0,.5);
+      --lift: inset 0 1px 0 rgba(255,255,255,.045);
+      --glass: rgba(15,16,17,.82);
+      --c-grid: #212227; --c-axis: #33343a; --c-ref: #8d8d94;
+      --seq-1: #39426b; --seq-2: #454f81; --seq-3: #525d97; --seq-4: #5f6cad;
+      --seq-5: #6f7cc0; --seq-6: #8290d0; --seq-7: #96a3de; --seq-8: #adb8e9;
+      --c-1: #6e8bef; --c-2: #e0a33e; --c-3: #35b98f; --c-4: #e0796f;
+      --c-5: #a98be8; --c-6: #4fb6d8; --c-7: #d07fb0; --c-8: #9ab55a;
     }
   }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; background: var(--bg); color: var(--text); }
-  body {
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, system-ui, sans-serif;
-    padding: 0 12px calc(96px + env(safe-area-inset-bottom));
-    max-width: 760px; margin: 0 auto;
-    overscroll-behavior-y: contain;
+  /* Stated again under the attribute so the control wins in BOTH
+     directions, not only away from the OS preference. */
+  :root[data-theme="dark"] {
+    --bg: #0f1011; --panel-2: #17181a; --panel-3: #1d1e21;
+    --ink: #e8e7e4; --ink-2: #c3c2bf; --sub: #8d8d94;
+    --line: #26262b; --rule: #1e1e22; --hair: #2f3036;
+    --accent: #8fa0e2; --accent-dim: rgba(143,160,226,.13);
+    --good: #63b98d; --watch: #cfa457; --poor: #e0857b; --unknown: #8b8f99;
+    --shadow: 0 18px 48px -12px rgba(0,0,0,.72), 0 2px 8px rgba(0,0,0,.5);
+    --lift: inset 0 1px 0 rgba(255,255,255,.045);
+    --glass: rgba(15,16,17,.82);
+    --c-grid: #212227; --c-axis: #33343a; --c-ref: #8d8d94;
+    --seq-1: #39426b; --seq-2: #454f81; --seq-3: #525d97; --seq-4: #5f6cad;
+    --seq-5: #6f7cc0; --seq-6: #8290d0; --seq-7: #96a3de; --seq-8: #adb8e9;
+    --c-1: #6e8bef; --c-2: #e0a33e; --c-3: #35b98f; --c-4: #e0796f;
+    --c-5: #a98be8; --c-6: #4fb6d8; --c-7: #d07fb0; --c-8: #9ab55a;
   }
-  header {
-    position: sticky; top: 0; z-index: 20;
-    display: flex; align-items: center; gap: 10px;
-    padding: calc(10px + env(safe-area-inset-top)) 2px 10px;
-    background: linear-gradient(var(--bg) 78%, transparent);
-  }
-  header h1 {
-    font-size: 17px; margin: 0; letter-spacing: .3px; font-weight: 650;
-    background: linear-gradient(135deg, var(--text) 40%, var(--accent));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  header .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
-  header .dot.up { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
-  header .dot.down { background: var(--bad); }
-  header .sp { flex: 1; }
-  .chip {
-    font-size: 12px; color: var(--muted); background: var(--panel);
-    border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; white-space: nowrap;
-  }
-  .chip.on { color: var(--accent); border-color: var(--accent); }
 
-  section {
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    margin: 0 0 12px; overflow: hidden;
-    box-shadow: 0 1px 0 color-mix(in srgb, white 3%, transparent) inset, 0 4px 14px -8px rgba(0,0,0,.5);
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { scroll-padding-top: calc(var(--bar-h) + var(--s-3)); }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font: 15px/1.55 var(--sans-face);
+    padding: 0 var(--s-4) calc(var(--compose-h) + var(--s-5));
+    max-width: 780px; margin: 0 auto;
+    overscroll-behavior-y: contain;
+    /* The default 17px Windows scrollbar is a grey slab down the side of
+       a document set in hairlines. */
+    scrollbar-width: thin; scrollbar-color: var(--hair) transparent;
   }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--hair); border-radius: 999px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* Proportional digits make a column ripple as values change length,
+     which on a page that repaints every few seconds is the clearest sign
+     of something assembled rather than typeset. */
+  td, th, code, time, .mono, .num, input[type=number], .value { font-variant-numeric: tabular-nums; }
+
+  /* Unglamorous, and the most reliable marker of a finished interface. */
+  :where(a, button, summary, input, select, textarea, [tabindex]):focus-visible {
+    outline: var(--ring) solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm);
+  }
+
+  /* --- the one sticky layer ------------------------------------------
+     Header and view switcher travel together in a single sticky element.
+     Two stacked sticky layers means two offsets to keep in agreement, and
+     the failure mode - the first row of content quietly hidden under the
+     second bar - renders as nothing wrong at all. */
+  .topbar {
+    position: sticky; top: 0; z-index: 30;
+    margin: 0 calc(var(--s-4) * -1); padding: 0 var(--s-4);
+    padding-top: env(safe-area-inset-top, 0px);
+    background: var(--bg);
+    border-bottom: 1px solid var(--rule);
+  }
+  @supports (backdrop-filter: blur(10px)) {
+    .topbar { background: var(--glass); backdrop-filter: blur(14px) saturate(140%); }
+  }
+  .masthead { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) 0 var(--s-2); }
+  .masthead h1 {
+    font-size: 19px; margin: 0; font-weight: 300; letter-spacing: -.02em; color: var(--ink);
+  }
+  .sp { flex: 1; }
+
+  /* Connection: a dot carries the colour, a word carries the meaning.
+     Colour alone would be a status only a sighted reader on a colour
+     screen can take. */
+  .conn { display: inline-flex; align-items: center; gap: 6px; color: var(--sub); font-size: 12px; font-family: var(--mono-face); }
+  .conn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--unknown); flex: none; box-shadow: 0 0 0 2px var(--bg); }
+  .conn.up .dot { background: var(--good); }
+  .conn.down .dot { background: var(--poor); }
+
+  /* --- controls that look like controls ------------------------------
+     Primary navigation styled as text, on a page made of text, is
+     invisible: the reader concludes the app has one screen. A recessed
+     rail with the current item RAISED out of it reads as a switch, and
+     every reader already knows the pattern from their OS. */
+  .rail {
+    display: flex; gap: 2px; padding: 3px; margin: 0 0 var(--s-2);
+    background: var(--panel-3); border-radius: var(--r-lg);
+    /* nowrap + sideways scroll: a control that can wrap invalidates its
+       own height, and the height is the sticky offset. */
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+  }
+  .rail::-webkit-scrollbar { display: none; }
+  /* On a phone the rail fills the width, because a full-width target is
+     the whole point of a thumb control. On a desktop it must NOT: four
+     tabs spread across 780px read as four separate headings rather than
+     as one switch. */
+  @media (min-width: 560px) { .rail { width: -moz-fit-content; width: fit-content; } }
+  .rail button {
+    flex: 1 0 auto; border: 1px solid transparent; background: transparent;
+    /* An inactive label on the muted ink reads as UNAVAILABLE. These are
+       all available; they are just not current. */
+    color: var(--ink-2); font-size: 13.5px; font-weight: 450;
+    padding: 7px 12px; border-radius: calc(var(--r-lg) - 3px);
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .rail button[aria-selected="true"] {
+    background: var(--bg); border-color: var(--hair); color: var(--ink);
+    font-weight: 550; box-shadow: var(--lift);
+  }
+  .rail button:active { transform: translateY(1px); }
+  .rail .badge {
+    font-family: var(--mono-face); font-size: 10.5px; line-height: 1;
+    padding: 3px 5px; border-radius: var(--r-sm);
+    background: var(--panel-2); color: var(--sub); border: 1px solid var(--line);
+  }
+  .rail .badge.live { background: transparent; color: var(--watch); border-color: currentColor; }
+  .rail .badge.ask { background: transparent; color: var(--poor); border-color: currentColor; }
+
+  /* --- sections are rules and space, not boxes ------------------------ */
+  section { margin: 0 0 var(--s-5); }
+  section + section { padding-top: var(--s-5); border-top: 1px solid var(--rule); }
+  /* Lowercase mono, because the label is an instrument reading. An
+     uppercase letterspaced 10px label is the single loudest generated-
+     dashboard tell. */
   section > h2 {
-    font-size: 12px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted);
-    margin: 0; padding: 12px var(--pad) 0; font-weight: 600;
+    font: 400 12px/1 var(--mono-face); color: var(--sub);
+    margin: 0 0 var(--s-3); letter-spacing: 0;
+    display: flex; align-items: center; gap: var(--s-2);
   }
-  .body { padding: var(--pad); }
-  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  section > h2 .sp { border-top: 1px solid var(--rule); height: 1px; }
+
+  .row { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
   .grow { flex: 1; min-width: 0; }
-  .muted { color: var(--muted); }
-  .small { font-size: 13px; }
+  .muted { color: var(--sub); }
+  .small { font-size: 13.5px; }
   .tiny { font-size: 12px; }
-  .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .mono { font-family: var(--mono-face); font-size: 12.5px; }
+  .stack { display: flex; flex-direction: column; gap: var(--s-2); }
+
+  /* A figure never appears without what it was measured over, so the two
+     are one component and it is awkward to quote one alone. */
+  .figure { display: flex; flex-direction: column; gap: 2px; }
+  .figure .value { font-size: 32px; font-weight: 250; letter-spacing: -.03em; line-height: 1.05; color: var(--ink); }
+  .figure .over { font: 400 11.5px/1.3 var(--mono-face); color: var(--sub); }
+  /* A tone tints the LABEL, never the figure: a 32px number in red reads
+     as an alarm before it reads as a number. */
+  .figure .over.good { color: var(--good); }
+  .figure .over.watch { color: var(--watch); }
+  .figure .over.poor { color: var(--poor); }
 
   button, select, input, textarea {
-    font: inherit; color: var(--text); background: var(--panel-2);
-    border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px;
+    font: inherit; color: var(--ink); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: var(--r-md); padding: 8px 10px;
   }
-  button { cursor: pointer; -webkit-appearance: none; appearance: none; transition: background .14s ease, border-color .14s ease, transform .1s ease; }
+  input::placeholder, textarea::placeholder { color: var(--sub); }
+  button {
+    cursor: pointer; -webkit-appearance: none; appearance: none;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  /* The 1px press is most of the perceived quality, and it is free. */
   button:active { transform: translateY(1px); }
-  button.primary {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 85%, white), var(--accent));
-    color: #06121f; border-color: transparent; font-weight: 620;
-    box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--accent) 60%, transparent);
-  }
+  button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 550; }
   button.ghost { background: transparent; }
-  button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); background: transparent; }
-  button:disabled { opacity: .5; cursor: default; }
+  button.danger { color: var(--poor); border-color: var(--line); background: transparent; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.sm { padding: 5px 9px; font-size: 12.5px; }
   @media (hover: hover) and (pointer: fine) {
-    button:not(:disabled):hover { border-color: var(--accent); }
-    button.primary:not(:disabled):hover { filter: brightness(1.06); }
-    button.danger:not(:disabled):hover { background: color-mix(in srgb, var(--bad) 10%, transparent); }
+    button:not(:disabled):hover { border-color: var(--hair); background: var(--panel-3); }
+    button.primary:not(:disabled):hover { background: var(--ink-2); border-color: var(--ink-2); }
+    button.danger:not(:disabled):hover { background: var(--panel-2); border-color: var(--poor); }
   }
   textarea { width: 100%; resize: vertical; min-height: 84px; line-height: 1.45; }
-  select { padding-right: 26px; }
+  select { padding-right: 24px; }
+  a { color: var(--accent); text-underline-offset: 2px; }
 
-  /* --- compose ------------------------------------------------------- */
+  /* --- discrete objects get a fill; nothing else does ----------------- */
+  .card {
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: var(--r-lg); padding: var(--s-3); box-shadow: var(--lift);
+  }
+  /* The stripe is the shape that carries the status when the colour does
+     not survive - a mono printout, or a reader who cannot separate the
+     hues. */
+  .card.tone { border-left: 3px solid var(--unknown); }
+  .card.tone.ask { border-left-color: var(--poor); }
+  .card.tone.run { border-left-color: var(--watch); }
+  .card.tone.fail { border-left-color: var(--poor); }
+
+  /* --- run -------------------------------------------------------------
+     An indeterminate rule rather than a pulsing dot: it says "still
+     moving" in the reader's peripheral vision without asking to be
+     looked at, and it stops dead under prefers-reduced-motion. */
+  .ticker { height: 2px; background: var(--panel-3); border-radius: 999px; overflow: hidden; margin: var(--s-2) 0; }
+  .ticker > i { display: block; height: 100%; width: 35%; background: var(--watch); animation: slide 1.6s var(--ease) infinite; }
+  @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
+  #run-activity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #run-draft { white-space: pre-wrap; margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--line); color: var(--ink-2); max-height: 38vh; overflow: auto; }
+  #steps { max-height: 45vh; overflow: auto; }
+  #steps div { padding: 3px 0; border-bottom: 1px solid var(--rule); color: var(--ink-2); }
+  #steps div:last-child { border-bottom: 0; }
+
+  #ask .cmd { background: var(--bg); border: 1px solid var(--line); padding: var(--s-2); border-radius: var(--r-md); overflow-x: auto; white-space: pre; margin: var(--s-2) 0; }
+
+  /* --- replies -------------------------------------------------------- */
+  .reply { border-top: 1px solid var(--rule); padding: var(--s-3) var(--s-2); margin: 0 calc(var(--s-2) * -1); border-left: 2px solid transparent; }
+  .reply:first-child { border-top: 0; }
+  .reply .meta { display: flex; gap: var(--s-2); align-items: center; font: 400 11.5px/1.4 var(--mono-face); color: var(--sub); margin-bottom: 6px; flex-wrap: wrap; }
+  .reply .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .reply .text code { background: var(--panel-2); padding: .1em .35em; border-radius: var(--r-sm); font-family: var(--mono-face); font-size: .92em; }
+  .reply .prompt { color: var(--sub); border-left: 2px solid var(--line); padding-left: var(--s-2); margin-bottom: var(--s-2); }
+  .reply .acts { display: flex; gap: 6px; margin-top: var(--s-2); flex-wrap: wrap; }
+  .reply .acts .destructive { margin-left: auto; }
+  .reply.internal .text { color: var(--sub); }
+  .reply.pinned { border-left-color: var(--hair); }
+  @media (hover: hover) and (pointer: fine) {
+    /* An edge as well as a fill: on a long list the fill alone is easy to
+       lose when the pointer is out at the right-hand edge. */
+    .reply:hover { background: var(--panel-2); border-left-color: var(--hair); }
+  }
+
+  /* --- compose -------------------------------------------------------- */
   .compose {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-    background: color-mix(in srgb, var(--bg) 92%, transparent);
-    backdrop-filter: blur(12px);
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    padding: var(--s-2) var(--s-4) calc(var(--s-2) + env(safe-area-inset-bottom, 0px));
+    /* The base colour must be legible ALONE - a browser without the
+       filter must not be left with see-through chrome over moving text. */
+    background: var(--glass);
     border-top: 1px solid var(--line);
   }
-  .compose .inner { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
-  .compose textarea { min-height: 44px; max-height: 40vh; border-radius: 12px; }
-  .compose button.primary { height: 44px; padding: 0 16px; flex: none; }
+  @supports (backdrop-filter: blur(10px)) {
+    .compose { backdrop-filter: blur(16px) saturate(140%); }
+  }
+  .compose .inner { max-width: 780px; margin: 0 auto; display: flex; gap: var(--s-2); align-items: flex-end; }
+  .compose textarea { min-height: 42px; max-height: 38vh; }
+  .compose button.primary { height: 42px; padding: 0 16px; flex: none; }
+  .compose select { font-size: 12px; padding: 5px 20px 5px 7px; }
+  .snips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .snips::-webkit-scrollbar { display: none; }
+  /* The snippet row sits directly above the textarea, so it has to share the
+     textarea's measure. Without this it inherits the full width of the fixed
+     bar and its first chip hangs to the left of the box it fills - invisible
+     on a phone, obvious on anything wider than the 780px measure. */
+  .compose .snips { max-width: 780px; margin: 0 auto var(--s-2); }
+  .snip {
+    flex: none; font-size: 12px; padding: 4px 9px; border-radius: 999px;
+    border: 1px solid var(--line); background: transparent; color: var(--ink-2); white-space: nowrap;
+    max-width: 46vw; overflow: hidden; text-overflow: ellipsis;
+  }
+  .snip.add { color: var(--sub); border-style: dashed; }
+  .snip[aria-pressed="true"] {
+    background: var(--panel-2); border-color: var(--hair); color: var(--ink); font-weight: 550;
+    box-shadow: var(--lift);
+  }
 
-  /* --- replies ------------------------------------------------------- */
-  .reply { border-top: 1px solid var(--line); padding: 12px var(--pad); }
-  .reply:first-child { border-top: 0; }
-  .reply .meta { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 6px; flex-wrap: wrap; }
-  .reply .text { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .reply .text code { background: var(--panel-2); padding: .1em .35em; border-radius: 5px; font-family: ui-monospace, monospace; font-size: .92em; }
-  .reply .text a { color: var(--accent); }
-  .reply .prompt { color: var(--muted); font-style: italic; margin-bottom: 6px; }
-  .reply .acts { display: flex; gap: 6px; margin-top: 9px; }
-  .reply .acts button { padding: 5px 9px; font-size: 12.5px; }
-  .reply.internal .text { color: var(--muted); }
-
-  /* --- run box ------------------------------------------------------- */
-  #run-box { border-color: var(--accent-dim); }
-  .pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: p 1.4s ease-in-out infinite; }
-  @keyframes p { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
-  #run-activity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #run-draft { white-space: pre-wrap; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); color: var(--muted); max-height: 40vh; overflow: auto; }
-  #steps { margin-top: 10px; max-height: 45vh; overflow: auto; }
-  #steps div { padding: 3px 0; border-bottom: 1px solid var(--line); }
-
-  /* --- ask card ------------------------------------------------------ */
-  #ask { border-color: var(--warn); }
-  #ask .cmd { background: var(--panel-2); padding: 9px; border-radius: 9px; overflow-x: auto; white-space: pre; margin: 8px 0; }
-
-  .warn { color: var(--warn); }
-  .bad { color: var(--bad); }
-  details > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; list-style: none; }
+  /* --- misc ------------------------------------------------------------ */
+  .warn { color: var(--watch); }
+  .bad { color: var(--poor); }
+  .ok { color: var(--good); }
+  /* A note carries a word AND a stripe, so the level survives mono. */
+  .note { border-left: 2px solid var(--line); padding-left: var(--s-2); margin-bottom: 6px; }
+  .note.warn { border-left-color: var(--watch); }
+  details > summary {
+    cursor: pointer; color: var(--ink-2); font-size: 13.5px; padding: 7px 0;
+    list-style: none; display: flex; align-items: center; gap: 7px;
+    border-top: 1px solid var(--rule);
+  }
   details > summary::-webkit-details-marker { display: none; }
-  details > summary::before { content: "▸ "; }
-  details[open] > summary::before { content: "▾ "; }
+  details > summary::before {
+    content: ""; width: 5px; height: 5px; flex: none;
+    border-right: 1.5px solid var(--sub); border-bottom: 1.5px solid var(--sub);
+    transform: rotate(-45deg); transition: transform var(--dur) var(--ease);
+  }
+  details[open] > summary::before { transform: rotate(45deg); }
+  details > summary:hover { color: var(--ink); }
+  .det-body { padding: var(--s-2) 0 var(--s-3); }
   .hidden { display: none !important; }
-  .bar { height: 6px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
-  .bar > i { display: block; height: 100%; background: var(--accent); }
-  ul.plain { list-style: none; margin: 8px 0 0; padding: 0; }
-  ul.plain li { padding: 7px 0; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+  .bar { height: 5px; border-radius: 999px; background: var(--panel-3); overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--seq-5); }
+  ul.plain { list-style: none; margin: 0; padding: 0; }
+  ul.plain li { padding: 8px 0; border-top: 1px solid var(--rule); display: flex; gap: var(--s-2); align-items: center; }
+  ul.plain li:first-child { border-top: 0; }
+  /* A queued message is prose and a timestamp is a reading; sitting them
+     in one flex row squeezes the prose into a two-word column on a phone.
+     Stack them and let the text have the width. */
+  ul.plain li.stacked { display: block; }
+  ul.plain li.stacked .when { display: flex; gap: var(--s-2); align-items: center; margin-top: 5px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px var(--s-3); font-family: var(--mono-face); font-size: 12.5px; }
+  .kv dt { color: var(--sub); }
+  .kv dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+  .empty { color: var(--sub); font-size: 13.5px; padding: var(--s-3) 0; }
+
+  /* A canvas loop is not reachable from a stylesheet, so the JS honours
+     this too - see prefersReducedMotion() below. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+    .ticker > i { width: 100%; animation: none; }
+  }
+
+  /* --- print is a third theme, not an afterthought --------------------
+     Flip the WHOLE token set. Overriding only body leaves every panel
+     painted from a near-black surface token, and the page prints as
+     black rectangles with invisible text. */
+  @media print {
+    :root, :root[data-theme="dark"], :root[data-theme="light"] {
+      --bg: #fff; --panel-2: #fff; --panel-3: #f2f2f0;
+      --ink: #000; --ink-2: #222; --sub: #555;
+      --line: #bbb; --rule: #ddd; --hair: #999;
+      --accent: #31428d; --good: #0c6659; --watch: #8f5a0e; --poor: #9c3a30; --unknown: #666;
+      --shadow: none; --lift: none; --glass: #fff;
+      /* The screen ramp's lightest steps are legible on a lit panel and
+         disappear on paper - a 2% bar of #e2e6f2 on white is a blank
+         row, which reads as no data rather than as a small number. The
+         print ramp starts well down the scale for that reason. */
+      --seq-1: #a7b2d2; --seq-2: #97a3c9; --seq-3: #8795c0; --seq-4: #7786b7;
+      --seq-5: #6777ae; --seq-6: #566796; --seq-7: #43527e; --seq-8: #2f3d66;
+      --c-1: #31428d; --c-2: #8f5a0e; --c-3: #0c6659; --c-4: #9c3a30;
+      --c-5: #5a3f8f; --c-6: #125f79; --c-7: #8c3367; --c-8: #4f621b;
+    }
+    body { padding: 0; max-width: none; }
+    .topbar, .compose, .rail, .acts, #run-steer-row { display: none !important; }
+    /* Every view prints; the switcher is a screen affordance only. */
+    .view { display: block !important; }
+    .view::before { content: attr(data-title); display: block; font: 400 11px var(--mono-face); color: #555; margin: 18px 0 6px; }
+    section { break-inside: avoid; }
+    details { display: block; }
+    details > summary { display: none; }
+    /* A search box and a Fetch button are affordances, not content. On
+       paper they are dead furniture that makes the page look like a
+       screenshot of an app rather than a document. Checkboxes stay,
+       because their state IS content. */
+    button, input:not([type="checkbox"]), select { display: none !important; }
+    .det-body { display: block !important; }
+    a { color: #000; }
+  }
 </style>
 </head>
 <body>
 
-<header>
-  <span class="dot" id="conn" title="connection"></span>
-  <h1>Halyard</h1>
-  <span class="sp"></span>
-  <span class="chip" id="chip-queue">0 queued</span>
-  <span class="chip" id="chip-engine">—</span>
-</header>
-
-<!-- approve / deny ------------------------------------------------------ -->
-<section id="ask" class="hidden">
-  <h2>Needs your approval</h2>
-  <div class="body">
-    <div id="ask-q"></div>
-    <div class="cmd mono" id="ask-cmd"></div>
-    <div class="row" id="ask-opts"></div>
+<div class="topbar">
+  <div class="masthead">
+    <h1>Halyard</h1>
+    <span class="conn" id="conn"><span class="dot"></span><span id="conn-text">connecting</span></span>
+    <span class="sp"></span>
+    <button class="ghost sm" id="outbox-btn" title="Messages parked while offline" hidden></button>
+    <button class="ghost sm" id="theme-btn" title="Light, dark or follow the system">auto</button>
   </div>
-</section>
-
-<!-- active run ---------------------------------------------------------- -->
-<section id="run-box" class="hidden">
-  <h2><span class="pulse"></span> Running</h2>
-  <div class="body">
-    <div class="row">
-      <div class="grow small" id="run-what"></div>
-      <button class="danger" id="run-kill">Stop</button>
-    </div>
-    <div class="small muted" id="run-activity"></div>
-    <div class="small" id="run-draft"></div>
-    <div class="row" id="run-steer-row" style="margin-top:10px">
-      <input class="grow small" id="run-steer" placeholder="Steer this run…">
-      <button class="ghost small" id="run-steer-go">Steer</button>
-    </div>
-    <div class="tiny muted" id="run-steer-note"></div>
+  <!-- Roving tabindex: one stop in the tab order, arrows move within.
+       Same pattern as every OS segmented control. -->
+  <div class="rail" role="tablist" aria-label="View">
+    <button role="tab" id="tab-now" aria-selected="true" tabindex="0" data-view="now">Now<span class="badge hidden" id="badge-now"></span></button>
+    <button role="tab" id="tab-replies" aria-selected="false" tabindex="-1" data-view="replies">Replies<span class="badge hidden" id="badge-replies"></span></button>
+    <button role="tab" id="tab-work" aria-selected="false" tabindex="-1" data-view="work">Work<span class="badge hidden" id="badge-work"></span></button>
+    <button role="tab" id="tab-system" aria-selected="false" tabindex="-1" data-view="system">System<span class="badge hidden" id="badge-system"></span></button>
   </div>
-</section>
+</div>
 
-<!-- transcript (deliberately OUTSIDE the run box, so it survives the run) -->
-<section id="steps-box" class="hidden">
-  <div class="body">
+<!-- =====================================================================
+     NOW - what is happening, and anything that is waiting on the reader.
+     ===================================================================== -->
+<main class="view" id="view-now" role="tabpanel" aria-labelledby="tab-now" data-title="Now">
+
+  <section id="ask" class="hidden">
+    <h2>needs your answer</h2>
+    <div class="card tone ask">
+      <div id="ask-q"></div>
+      <div class="cmd mono" id="ask-cmd"></div>
+      <div class="row" id="ask-opts"></div>
+    </div>
+  </section>
+
+  <section id="run-box" class="hidden">
+    <h2>running<span class="sp grow"></span><span class="tiny" id="run-elapsed"></span></h2>
+    <div class="card tone run">
+      <div class="row">
+        <div class="grow small mono" id="run-what"></div>
+        <button class="danger sm" id="run-kill">Stop</button>
+      </div>
+      <div class="ticker" id="run-ticker"><i></i></div>
+      <div class="small muted" id="run-activity"></div>
+      <div class="small" id="run-draft"></div>
+      <div class="row" id="run-steer-row" style="margin-top:var(--s-3)">
+        <input class="grow small" id="run-steer" placeholder="Steer this run">
+        <button class="ghost sm" id="run-steer-go">Steer</button>
+      </div>
+      <div class="tiny muted" id="run-steer-note" style="margin-top:6px"></div>
+    </div>
+  </section>
+
+  <!-- Deliberately OUTSIDE the run card, so it survives the run ending. -->
+  <section id="steps-box" class="hidden">
     <details id="steps-details">
       <summary><span id="steps-count">0</span> steps</summary>
-      <div class="mono small" id="steps"></div>
+      <div class="mono small det-body" id="steps"></div>
     </details>
-  </div>
-</section>
+  </section>
 
-<!-- failed / retry ------------------------------------------------------ -->
-<section id="failed" class="hidden">
-  <h2>Last run failed</h2>
-  <div class="body">
-    <div class="small" id="failed-why"></div>
-    <div class="small muted" id="failed-msg" style="margin:8px 0"></div>
-    <div class="row">
-      <button class="primary" id="failed-retry">Retry that message</button>
-      <button class="ghost" id="failed-dismiss">Dismiss</button>
+  <section id="failed" class="hidden">
+    <h2>last run failed</h2>
+    <div class="card tone fail">
+      <div class="small" id="failed-why"></div>
+      <div class="small muted mono" id="failed-msg" style="margin:var(--s-2) 0"></div>
+      <div class="row">
+        <button class="primary sm" id="failed-retry">Retry that message</button>
+        <button class="ghost sm" id="failed-dismiss">Dismiss</button>
+      </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- pinned -------------------------------------------------------------- -->
-<section id="pinned-box" class="hidden">
-  <h2>Pinned</h2>
-  <div id="pinned"></div>
-</section>
-
-<!-- replies ------------------------------------------------------------- -->
-<section>
-  <h2>Replies</h2>
-  <div class="body" style="padding-bottom:6px">
-    <div class="row">
-      <input class="grow" id="search" placeholder="Search all replies…" inputmode="search">
-      <button class="ghost" id="search-go">Find</button>
+  <section>
+    <h2>thread</h2>
+    <div class="stack">
+      <div class="row">
+        <select class="grow" id="thread" aria-label="Thread"></select>
+        <button class="ghost sm" id="thread-new">New</button>
+        <button class="ghost sm" id="thread-clear">Clear context</button>
+      </div>
+      <div class="small muted" id="handover"></div>
     </div>
-    <div class="tiny muted" id="search-note" style="margin-top:6px"></div>
-  </div>
-  <div id="replies"></div>
-</section>
+  </section>
 
-<!-- status -------------------------------------------------------------- -->
-<section>
-  <h2>Status</h2>
-  <div class="body">
-    <div id="warnings"></div>
-    <div class="small mono muted" id="status-lines"></div>
-    <details style="margin-top:8px">
-      <summary>Scheduled messages</summary>
-      <ul class="plain" id="scheduled"></ul>
-    </details>
-    <details style="margin-top:4px">
-      <summary>Artifacts</summary>
-      <div class="row" style="margin:8px 0">
-        <input class="grow tiny" id="art-search" placeholder="Search name or contents…">
-        <button class="ghost tiny" id="art-search-go">Find</button>
+  <section id="pinned-box" class="hidden">
+    <h2>pinned</h2>
+    <div id="pinned"></div>
+  </section>
+
+  <section id="latest-box" class="hidden">
+    <h2>latest reply</h2>
+    <div id="latest"></div>
+  </section>
+</main>
+
+<!-- =====================================================================
+     REPLIES - the archive, searchable, filterable by thread.
+     ===================================================================== -->
+<main class="view hidden" id="view-replies" role="tabpanel" aria-labelledby="tab-replies" data-title="Replies">
+  <section>
+    <h2>replies</h2>
+    <div class="stack">
+      <div class="row">
+        <input class="grow" id="search" placeholder="Search all replies" inputmode="search" aria-label="Search replies">
+        <button class="ghost sm" id="search-go">Find</button>
+      </div>
+      <div class="snips" id="thread-filter"></div>
+      <div class="tiny muted" id="search-note"></div>
+    </div>
+    <div id="replies" style="margin-top:var(--s-3)"></div>
+  </section>
+</main>
+
+<!-- =====================================================================
+     WORK - things the agent produced, and things it will do later.
+     ===================================================================== -->
+<main class="view hidden" id="view-work" role="tabpanel" aria-labelledby="tab-work" data-title="Work">
+
+  <section id="spend-box">
+    <h2>spend</h2>
+    <div class="stack" id="spend"><div class="empty">Loading.</div></div>
+  </section>
+
+  <section>
+    <h2>scheduled</h2>
+    <ul class="plain" id="scheduled"></ul>
+  </section>
+
+  <section>
+    <h2>artifacts</h2>
+    <div class="stack">
+      <div class="row">
+        <input class="grow small" id="art-search" placeholder="Search name or contents">
+        <button class="ghost sm" id="art-search-go">Find</button>
       </div>
       <ul class="plain" id="art-search-results"></ul>
       <ul class="plain" id="artifacts"></ul>
-      <div class="row" style="margin-top:10px">
-        <span class="tiny muted">Clean up older than</span>
-        <input class="tiny" id="art-prune-days" type="number" min="1" value="30" style="width:5em">
-        <span class="tiny muted">days</span>
-        <button class="ghost tiny" id="art-prune-preview">Preview</button>
+    </div>
+    <details style="margin-top:var(--s-3)">
+      <summary>Clean up old artifacts</summary>
+      <div class="det-body stack">
+        <div class="row">
+          <span class="tiny muted">Older than</span>
+          <input class="tiny" id="art-prune-days" type="number" min="1" value="30" style="width:5em" aria-label="Age in days">
+          <span class="tiny muted">days</span>
+          <button class="ghost sm" id="art-prune-preview">Preview</button>
+        </div>
+        <ul class="plain" id="art-prune-list"></ul>
+        <button class="danger sm hidden" id="art-prune-delete">Delete selected</button>
       </div>
-      <ul class="plain" id="art-prune-list"></ul>
-      <button class="danger tiny hidden" id="art-prune-delete" style="margin-top:6px">Delete selected</button>
     </details>
-    <details style="margin-top:4px" id="spend-details">
-      <summary>Spend (7 days)</summary>
-      <div id="spend" class="small"></div>
-    </details>
-    <details style="margin-top:4px" id="logs-details">
-      <summary>Log tail</summary>
-      <div class="row" style="margin:8px 0">
-        <select id="log-file">
+  </section>
+</main>
+
+<!-- =====================================================================
+     SYSTEM - the bridge's own state. Read when something is wrong.
+     ===================================================================== -->
+<main class="view hidden" id="view-system" role="tabpanel" aria-labelledby="tab-system" data-title="System">
+
+  <section id="warn-box" class="hidden">
+    <h2>warnings</h2>
+    <div id="warnings"></div>
+  </section>
+
+  <section>
+    <h2>bridge</h2>
+    <dl class="kv" id="status-kv"></dl>
+  </section>
+
+  <section>
+    <h2>notifications</h2>
+    <div class="stack">
+      <div class="row">
+        <button class="ghost sm" id="push-toggle">Enable push</button>
+        <span class="tiny muted grow" id="push-note"></span>
+      </div>
+      <label class="row tiny muted" style="gap:6px">
+        <input type="checkbox" id="opt-vibrate" style="width:auto;padding:0">
+        Vibrate when a run needs an answer
+      </label>
+      <label class="row tiny muted" style="gap:6px">
+        <input type="checkbox" id="opt-wake" style="width:auto;padding:0">
+        Keep the screen awake while a run is active
+      </label>
+      <div class="tiny muted" id="wake-note"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>logs</h2>
+    <div class="stack">
+      <div class="row">
+        <select id="log-file" aria-label="Log file">
           <option value="halyard">halyard.log</option>
           <option value="messages">messages</option>
           <option value="runs">runs</option>
         </select>
-        <button class="ghost" id="log-go">Fetch</button>
+        <button class="ghost sm" id="log-go">Fetch</button>
       </div>
       <div class="mono tiny" id="log-out" style="max-height:45vh;overflow:auto;white-space:pre-wrap"></div>
-    </details>
-    <div class="row" style="margin-top:10px">
-      <button class="ghost small" id="push-toggle">Enable push</button>
-      <span class="tiny muted grow" id="push-note"></span>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- context ------------------------------------------------------------- -->
-<section>
-  <h2>Thread</h2>
-  <div class="body">
-    <div class="row">
-      <select class="grow" id="thread"></select>
-      <button class="ghost" id="thread-new">New</button>
-      <button class="ghost" id="thread-clear">Clear context</button>
-    </div>
-    <div class="small muted" id="handover" style="margin-top:10px"></div>
-  </div>
-</section>
+  <section>
+    <h2>shortcuts</h2>
+    <dl class="kv">
+      <dt>1 - 4</dt><dd>switch view</dd>
+      <dt>/</dt><dd>search replies</dd>
+      <dt>c</dt><dd>compose</dd>
+      <dt>ctrl + enter</dt><dd>send</dd>
+      <dt>esc</dt><dd>leave the field</dd>
+    </dl>
+  </section>
+</main>
 
-<!-- compose ------------------------------------------------------------- -->
+<!-- The compose bar is fixed, because queueing work is the whole point of
+     the page and must never be more than one tap away, whatever is on
+     screen. -->
 <div class="compose">
+  <div class="snips" id="snips"></div>
   <div class="inner">
-    <textarea id="msg" placeholder="Message the agent…" enterkeyhint="send"></textarea>
+    <textarea id="msg" placeholder="Message the agent" enterkeyhint="send" aria-label="Message"></textarea>
     <button class="primary" id="send">Send</button>
   </div>
-  <div class="inner" style="margin-top:8px;gap:6px">
-    <select id="engine" class="tiny grow"></select>
-    <select id="model" class="tiny grow"></select>
-    <select id="when" class="tiny grow">
+  <div class="inner" style="margin-top:6px;gap:6px">
+    <select id="engine" class="grow" aria-label="Engine"></select>
+    <select id="model" class="grow" aria-label="Model"></select>
+    <select id="when" class="grow" aria-label="When to run">
       <option value="">Now</option>
       <option value="+1h">In 1 hour</option>
       <option value="07:00">Tomorrow 07:00</option>
       <option value="daily:07:00">Every day 07:00</option>
       <option value="weekdays:08:30">Weekdays 08:30</option>
       <option value="weekly:09:00">Weekly 09:00</option>
+      <option value="at">At a date and time...</option>
     </select>
+  </div>
+  <!-- Revealed only by the "At..." option, because a date field permanently
+       on the bar costs a row of height on every send that does not need one.
+       datetime-local carries no timezone, which is the correct reading here:
+       the picker means the wall clock of the phone holding it. -->
+  <div class="inner hidden" id="when-at-row" style="margin-top:6px;gap:6px">
+    <input type="datetime-local" class="grow" id="when-at" aria-label="Run at">
+    <button class="ghost sm" id="when-at-clear">Clear</button>
   </div>
 </div>
 
@@ -335,6 +692,92 @@
   }
   function post(path, body) {
     return api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
+  }
+
+  function prefersReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  // ---------------------------------------------------------------------
+  // Theme. Three states, not two: "auto" has to be reachable again once a
+  // reader has pinned one, or the control is a one-way door.
+  var THEMES = ['auto', 'light', 'dark'];
+  function applyTheme(t) {
+    if (t === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+    $('theme-btn').textContent = t;
+    // The browser chrome colour is part of the page on a phone in
+    // standalone mode; leaving it at the old value is a visible seam
+    // above the masthead.
+    var probe = getComputedStyle(document.body).backgroundColor;
+    var meta = $('theme-color');
+    if (meta && probe) meta.setAttribute('content', probe);
+  }
+  var theme = LS.get('theme', 'auto');
+  if (THEMES.indexOf(theme) === -1) theme = 'auto';
+  applyTheme(theme);
+  $('theme-btn').onclick = function () {
+    theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+    LS.set('theme', theme);
+    applyTheme(theme);
+  };
+  if (window.matchMedia) {
+    // Re-stamp theme-color when the OS flips underneath an "auto" page.
+    try {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { applyTheme(theme); });
+    } catch (e) { /* older Safari: no addEventListener on MediaQueryList */ }
+  }
+
+  // ---------------------------------------------------------------------
+  // The sticky offset is a MEASUREMENT. Anything scrolled to must clear
+  // the bar, and the bar's height depends on the font the device actually
+  // resolved - which nothing in CSS can check.
+  function measureBar() {
+    var root = document.documentElement.style;
+    var h = document.querySelector('.topbar').getBoundingClientRect().height;
+    if (h > 0) root.setProperty('--bar-h', Math.round(h) + 'px');
+    // The compose bar's height moves with the snippet row wrapping, the
+    // textarea being dragged taller, and the device's safe-area inset.
+    // Nothing in CSS can read it, so it is read here and written back.
+    var c = document.querySelector('.compose').getBoundingClientRect().height;
+    if (c > 0) root.setProperty('--compose-h', Math.round(c) + 'px');
+  }
+  window.addEventListener('resize', measureBar);
+  window.addEventListener('orientationchange', measureBar);
+
+  // ---------------------------------------------------------------------
+  // Views. A roving tabindex, so the switcher is one stop in the tab order
+  // and the arrows move within it.
+  var VIEWS = ['now', 'replies', 'work', 'system'];
+  var view = LS.get('view', 'now');
+  if (VIEWS.indexOf(view) === -1) view = 'now';
+
+  function setView(v, focus) {
+    view = v; LS.set('view', v);
+    VIEWS.forEach(function (name) {
+      var tab = $('tab-' + name), panel = $('view-' + name), on = name === v;
+      tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      tab.tabIndex = on ? 0 : -1;
+      panel.classList.toggle('hidden', !on);
+    });
+    if (focus) $('tab-' + v).focus();
+    if (v === 'work') { loadSpend(); pollArtifacts(); pollScheduled(); }
+    measureBar();
+  }
+  VIEWS.forEach(function (name) { $('tab-' + name).onclick = function () { setView(name); }; });
+  document.querySelector('.rail').addEventListener('keydown', function (e) {
+    var i = VIEWS.indexOf(view);
+    if (e.key === 'ArrowRight') { setView(VIEWS[(i + 1) % VIEWS.length], true); e.preventDefault(); }
+    if (e.key === 'ArrowLeft') { setView(VIEWS[(i + VIEWS.length - 1) % VIEWS.length], true); e.preventDefault(); }
+    if (e.key === 'Home') { setView(VIEWS[0], true); e.preventDefault(); }
+    if (e.key === 'End') { setView(VIEWS[VIEWS.length - 1], true); e.preventDefault(); }
+  });
+
+  function setBadge(name, text, kind) {
+    var b = $('badge-' + name);
+    b.classList.toggle('hidden', !text);
+    b.textContent = text || '';
+    b.className = 'badge' + (text ? '' : ' hidden') + (kind ? ' ' + kind : '');
   }
 
   // ---------------------------------------------------------------------
@@ -387,38 +830,72 @@
   }
 
   // ---------------------------------------------------------------------
+  // Screen wake lock. A run watched from a phone on a desk is exactly the
+  // case where the screen blanking loses the thing being watched, and the
+  // page has to re-acquire after a visibility change because the platform
+  // drops the lock whenever the tab is hidden.
+  var wakeLock = null;
+  function wakeWanted() { return LS.get('wake', false) && !!(health && health.activeRun); }
+  function syncWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    if (wakeWanted() && !wakeLock && !document.hidden) {
+      navigator.wakeLock.request('screen').then(function (l) {
+        wakeLock = l;
+        l.addEventListener('release', function () { wakeLock = null; });
+      }).catch(function (e) { $('wake-note').textContent = 'Wake lock refused: ' + e.message; });
+    } else if (!wakeWanted() && wakeLock) {
+      wakeLock.release().catch(function () {}); wakeLock = null;
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // State the page holds
 
   var health = null;
   var lastSeq = {};
   var lastRunId = {};
   var steps = [];
+  var lastContact = 0;
+  var allReplies = [];
+  var threadFilter = LS.get('threadFilter', '');
 
   function renderHealth(h) {
     health = h;
-    $('conn').className = 'dot up';
-    $('chip-queue').textContent = h.queued + ' queued' + (h.scheduled ? ' · ' + h.scheduled + ' later' : '');
-    $('chip-engine').textContent = h.defaultEngine;
+    lastContact = Date.now();
+    setConn(true);
+
+    var counts = [];
+    if (h.queued) counts.push(h.queued + ' queued');
+    if (h.scheduled) counts.push(h.scheduled + ' later');
+    setBadge('work', h.scheduled ? String(h.scheduled) : '');
+
+    var warns = (h.warnings || []).filter(function (x) { return x.level === 'warn'; }).length;
+    setBadge('system', warns ? String(warns) : '', warns ? 'ask' : '');
 
     var w = $('warnings');
     w.innerHTML = (h.warnings || []).map(function (x) {
-      return '<div class="small ' + (x.level === 'warn' ? 'warn' : 'muted') + '" style="margin-bottom:6px">' +
-        (x.level === 'warn' ? '⚠ ' : 'ℹ ') + esc(x.msg) + '</div>';
+      return '<div class="note small ' + (x.level === 'warn' ? 'warn' : 'muted') + '">' +
+        (x.level === 'warn' ? 'warning: ' : 'note: ') + esc(x.msg) + '</div>';
     }).join('');
+    $('warn-box').classList.toggle('hidden', !(h.warnings || []).length);
 
-    var lines = [
-      'workspace   ' + h.workspace,
-      'engine      ' + h.defaultEngine + '   mode ' + h.permissionMode,
-      'relay       ' + (h.relay.enabled ? 'on' : 'OFF'),
-      'failover    ' + (h.failover && h.failover.enabled ? 'on -> ' + h.failover.to : 'off'),
-      'lock        ' + (h.lock ? 'held ' + Math.round(h.lock.ageMs / 1000) + 's by pid ' + h.lock.pid : 'free'),
-      'push        ' + h.push.subscribers + ' subscriber(s)',
-      'version     ' + h.version
+    var kv = [
+      ['workspace', h.workspace],
+      ['engine', h.defaultEngine + '  (mode ' + h.permissionMode + ')'],
+      ['queue', (h.queued || 0) + ' due, ' + (h.scheduled || 0) + ' scheduled'],
+      ['relay', h.relay.enabled ? 'on' : 'OFF'],
+      ['failover', h.failover && h.failover.enabled ? 'on -> ' + h.failover.to : 'off'],
+      ['lock', h.lock ? 'held ' + Math.round(h.lock.ageMs / 1000) + 's by pid ' + h.lock.pid : 'free'],
+      ['push', h.push.subscribers + ' subscriber(s)'],
+      ['version', h.version]
     ];
-    $('status-lines').textContent = lines.join('\n');
+    $('status-kv').innerHTML = kv.map(function (p) {
+      return '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>';
+    }).join('');
 
     renderRunBox(h.activeRun);
     renderFailed(h.lastFailed);
+    syncWakeLock();
 
     // Transcript: fetch only the delta, and only when the counter moved.
     var t = (h.transcript || {})[h.activeRun ? h.activeRun.engine : h.defaultEngine];
@@ -439,14 +916,20 @@
       box.classList.add('hidden');
       // A leftover draft above a finished reply reads as part of it.
       $('run-draft').textContent = '';
+      if (!pendingAsk) setBadge('now', '');
       return;
     }
     box.classList.remove('hidden');
-    $('run-what').textContent = run.thread + ' · ' + run.engine + (run.model ? ' · ' + run.model : '') +
-      ' · ' + Math.round((Date.now() - run.startedAt) / 1000) + 's';
-    $('run-activity').textContent = run.activity || 'starting…';
+    if (!pendingAsk) setBadge('now', 'run', 'live');
+    var secs = Math.round((Date.now() - run.startedAt) / 1000);
+    $('run-what').textContent = run.thread + ' / ' + run.engine + (run.model ? ' / ' + run.model : '');
+    $('run-elapsed').textContent = secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+    $('run-activity').textContent = run.activity || 'starting';
     $('run-kill').disabled = !!run.killRequested;
-    $('run-kill').textContent = run.killRequested ? 'Stopping…' : 'Stop';
+    $('run-kill').textContent = run.killRequested ? 'Stopping' : 'Stop';
+    // A canvas loop is not reachable from a stylesheet, and neither is a
+    // ticker the reader has asked to hold still.
+    $('run-ticker').classList.toggle('hidden', prefersReducedMotion());
 
     // Steering needs the same pre-tool hook the relay needs, so it reuses the
     // relay flag rather than inventing a second per-engine capability field.
@@ -479,13 +962,34 @@
     $('failed').classList.toggle('hidden', !f);
     if (!f) return;
     $('failed-why').textContent = f.reason;
-    $('failed-msg').textContent = '“' + String(f.message).slice(0, 300) + '”';
+    $('failed-msg').textContent = String(f.message).slice(0, 300);
   }
 
+  // ---------------------------------------------------------------------
+  // The approve/deny card.
+  //
+  // This is the one thing on the page that is BLOCKING something: a run is
+  // sitting still until it is answered. So unlike everything else here it
+  // is allowed to interrupt - it pulls the view over, marks the tab title
+  // (which is what a phone shows in its tab strip and app switcher), and
+  // optionally vibrates. All three stop the moment it is answered.
   var lastRenderedAskId = null;
+  var pendingAsk = false;
+  var BASE_TITLE = 'Halyard';
+
   function renderState(s) {
     var pending = s && s.status === 'pending';
     $('ask').classList.toggle('hidden', !pending);
+
+    if (pending !== pendingAsk) {
+      pendingAsk = pending;
+      document.title = pending ? '(1) ' + BASE_TITLE : BASE_TITLE;
+      setBadge('now', pending ? 'ask' : (health && health.activeRun ? 'run' : ''), pending ? 'ask' : 'live');
+      if (pending) {
+        setView('now');
+        if (LS.get('vibrate', true) && navigator.vibrate) { try { navigator.vibrate([40, 60, 40]); } catch (e) {} }
+      }
+    }
     if (!pending) { lastRenderedAskId = null; return; }
     // The interval poll re-fires with the SAME still-pending question every
     // few seconds. Rebuilding the card unconditionally is harmless for
@@ -507,7 +1011,7 @@
     // act on it.
     if (!s.options.length) {
       var input = document.createElement('input');
-      input.className = 'grow'; input.placeholder = 'Type your answer…';
+      input.className = 'grow'; input.placeholder = 'Type your answer';
       var go = document.createElement('button');
       go.className = 'primary'; go.textContent = 'Answer';
       var submit = function () {
@@ -557,66 +1061,199 @@
     var box = $('pinned');
     box.innerHTML = '';
     list.forEach(function (n) {
-      var el = document.createElement('div');
-      el.className = 'reply';
-      var meta = [ago(n.at), n.thread, n.engine, n.model].filter(Boolean);
-      el.innerHTML = '<div class="meta">' + meta.map(esc).join(' · ') + '</div>' +
-        '<div class="text">' + renderRich(n.message) + '</div>';
-      var acts = document.createElement('div');
-      acts.className = 'acts';
-      var ub = document.createElement('button');
-      ub.className = 'ghost'; ub.textContent = 'Unpin';
-      ub.onclick = function () { pinToggle(n); };
-      acts.appendChild(ub);
-      el.appendChild(acts);
-      box.appendChild(el);
+      box.appendChild(replyEl(n, { pinnedOnly: true }));
     });
   }
 
-  function renderReplies(items) {
-    var box = $('replies');
-    box.innerHTML = '';
-    if (!items.length) {
-      box.innerHTML = '<div class="body muted small">Nothing yet.</div>';
-      return;
-    }
-    items.forEach(function (n) {
-      var el = document.createElement('div');
-      el.className = 'reply' + (n.internal ? ' internal' : '');
-      var meta = [ago(n.at), n.thread, n.engine, n.model].filter(Boolean);
-      if (Number.isFinite(n.costUsd)) meta.push('$' + n.costUsd.toFixed(4));
-      if (Number.isFinite(n.durationMs)) meta.push(Math.round(n.durationMs / 1000) + 's');
-      el.innerHTML =
-        '<div class="meta">' + meta.map(esc).join(' · ') + '</div>' +
-        (n.prompt ? '<div class="prompt small">' + esc(n.prompt.slice(0, 200)) + '</div>' : '') +
-        '<div class="text">' + renderRich(n.message) + '</div>';
+  // One builder for every reply-shaped thing on the page: the archive list,
+  // the pinned snapshots and the "latest reply" summary on Now. Three copies
+  // of this markup is how the three drift apart.
+  function replyEl(n, opts) {
+    opts = opts || {};
+    var el = document.createElement('div');
+    el.className = 'reply' + (n.internal ? ' internal' : '') + (isPinned(n.id) ? ' pinned' : '');
+    var meta = [ago(n.at), n.thread, n.engine, n.model].filter(Boolean);
+    if (Number.isFinite(n.costUsd)) meta.push('$' + n.costUsd.toFixed(4));
+    if (Number.isFinite(n.durationMs)) meta.push(Math.round(n.durationMs / 1000) + 's');
+    el.innerHTML =
+      '<div class="meta">' + meta.map(esc).join('  ') + '</div>' +
+      (n.prompt && !opts.pinnedOnly ? '<div class="prompt small">' + esc(n.prompt.slice(0, 200)) + '</div>' : '') +
+      '<div class="text">' + renderRich(n.message) + '</div>';
 
-      var acts = document.createElement('div');
-      acts.className = 'acts';
-      if (window.speechSynthesis) {
-        var sb = document.createElement('button');
-        sb.className = 'ghost'; sb.textContent = 'Read';
-        sb.onclick = function () { speak(n.message, sb, function () { sb.textContent = 'Read'; }); };
-        acts.appendChild(sb);
-      }
-      var pb = document.createElement('button');
-      pb.className = 'ghost'; pb.textContent = isPinned(n.id) ? 'Pinned' : 'Pin';
-      pb.onclick = function () { pinToggle(n); pb.textContent = isPinned(n.id) ? 'Pinned' : 'Pin'; };
-      acts.appendChild(pb);
-      var cb = document.createElement('button');
-      cb.className = 'ghost'; cb.textContent = 'Copy';
-      cb.onclick = function () { navigator.clipboard.writeText(n.message); cb.textContent = 'Copied'; setTimeout(function () { cb.textContent = 'Copy'; }, 1200); };
-      acts.appendChild(cb);
-      var db = document.createElement('button');
-      db.className = 'ghost'; db.textContent = 'Delete';
-      db.onclick = function () {
+    var acts = document.createElement('div');
+    acts.className = 'acts';
+    function act(label, fn) {
+      var b = document.createElement('button');
+      b.className = 'ghost sm'; b.textContent = label; b.onclick = function () { fn(b); };
+      acts.appendChild(b);
+      return b;
+    }
+    if (opts.pinnedOnly) {
+      act('Unpin', function () { pinToggle(n); });
+    } else {
+      if (window.speechSynthesis) act('Read', function (b) { speak(n.message, b, function () { b.textContent = 'Read'; }); });
+      var pb = act('Pin', function (b) { pinToggle(n); b.textContent = isPinned(n.id) ? 'Pinned' : 'Pin'; el.classList.toggle('pinned', isPinned(n.id)); });
+      pb.textContent = isPinned(n.id) ? 'Pinned' : 'Pin';
+      act('Copy', function (b) {
+        navigator.clipboard.writeText(n.message);
+        b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1200);
+      });
+      // Native share exists on exactly the device this page is for, and is
+      // the only way to get a reply into another app one-handed.
+      if (navigator.share) act('Share', function () { navigator.share({ title: 'Halyard reply', text: n.message }).catch(function () {}); });
+      // Following up means continuing THIS thread, which is a different
+      // thing from whatever thread the compose box was last left on.
+      // thread() reads the SELECT before localStorage, so moving the stored
+      // value alone does nothing: if the reply's thread is not already an
+      // option the select never moves and the follow-up lands in whatever
+      // thread was there before. Add the option, then select it.
+      act('Follow up', function (b) {
+        if (n.thread) {
+          var sel = $('thread'), found = false;
+          for (var i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === n.thread) { found = true; break; }
+          }
+          if (!found) {
+            var o = document.createElement('option');
+            o.value = o.textContent = n.thread;
+            sel.insertBefore(o, sel.firstChild);
+          }
+          sel.value = n.thread;
+          LS.set('thread', n.thread);
+          // Assigning .value fires no change event, so the handler that
+          // refreshes the carried-context panel has to be called by hand.
+          pollContext();
+        }
+        setView('now');
+        // From the Now view the card is already on the target view, so with
+        // no acknowledgement here the tap looks like it did nothing at all.
+        b.textContent = n.thread ? 'In ' + n.thread : 'Composing';
+        setTimeout(function () { b.textContent = 'Follow up'; }, 1400);
+        $('msg').focus();
+      });
+      act('Delete', function () {
         if (!confirm('Delete this reply? This cannot be undone.')) return;
         api('/api/notifications?id=' + encodeURIComponent(n.id), { method: 'DELETE' }).then(pollNotifications);
-      };
-      acts.appendChild(db);
-      el.appendChild(acts);
-      box.appendChild(el);
+      }).className = 'ghost sm destructive';
+    }
+    el.appendChild(acts);
+    return el;
+  }
+
+  function renderReplies(items) {
+    allReplies = items;
+    renderThreadFilter(items);
+    var shown = threadFilter ? items.filter(function (n) { return n.thread === threadFilter; }) : items;
+    setBadge('replies', shown.length ? String(shown.length) : '');
+
+    var box = $('replies');
+    box.innerHTML = '';
+    if (!shown.length) {
+      box.innerHTML = '<div class="empty">' + (threadFilter ? 'Nothing in this thread.' : 'Nothing yet.') + '</div>';
+    } else {
+      shown.forEach(function (n) { box.appendChild(replyEl(n)); });
+    }
+
+    // Now carries the most recent reply, so the common case - glance at the
+    // phone, read the answer - needs no navigation at all.
+    var latest = items.filter(function (n) { return !n.internal; })[0];
+    $('latest-box').classList.toggle('hidden', !latest);
+    if (latest) { $('latest').innerHTML = ''; $('latest').appendChild(replyEl(latest)); }
+  }
+
+  function renderThreadFilter(items) {
+    var names = [];
+    items.forEach(function (n) { if (n.thread && names.indexOf(n.thread) === -1) names.push(n.thread); });
+    var box = $('thread-filter');
+    box.innerHTML = '';
+    if (names.length < 2) return;
+    ['all'].concat(names).forEach(function (name) {
+      var val = name === 'all' ? '' : name;
+      var b = document.createElement('button');
+      b.className = 'snip';
+      b.textContent = name;
+      b.setAttribute('aria-pressed', val === threadFilter ? 'true' : 'false');
+      b.onclick = function () { threadFilter = val; LS.set('threadFilter', val); renderReplies(allReplies); };
+      box.appendChild(b);
     });
+  }
+
+  // ---------------------------------------------------------------------
+  // Spend.
+  //
+  // Two DIFFERENT questions, one panel: "which day" (a magnitude across a
+  // sequence) and "which thread" (a share between kinds). Nothing here is
+  // drawn twice - an earlier draft carried a sparkline above these bars,
+  // which was a second picture of the identical seven numbers and bought
+  // a band of dead space with it.
+  //
+  // Days take a SINGLE-HUE ramp: cost per day differs in position, not in
+  // kind, and a hue change across it would assert a difference that is not
+  // there. Threads take the CATEGORICAL set, because they genuinely are
+  // different kinds. Neither borrows a status ink.
+  //
+  // Both are inline bars rather than a canvas: this panel has to survive a
+  // printout and 7 rectangles do not need a GPU.
+
+  // Take colours ACROSS the whole ramp, not the first n - otherwise a
+  // 7-day week renders entirely inside the ramp's lightest quarter.
+  function rampToken(i, n) {
+    if (n < 2) return 'var(--seq-5)';
+    return 'var(--seq-' + (1 + Math.round(i * 7 / (n - 1))) + ')';
+  }
+  // Two encodings live on this one screen: a verdict ink (the amber run
+  // ticker, the coral ask badge, the green connection dot) and a series
+  // ink. Where that happens, the second set is drawn from the range
+  // furthest in hue from the first - otherwise an amber bar labelled
+  // "main" sits a thumb's width below an amber badge meaning "running",
+  // and both readings are available at once.
+  //
+  // So the categorical set is walked in an order that spends the hues a
+  // status could claim - amber (watch), coral (poor), teal (good) - last,
+  // by which point a chart has six series and a legend anyway. Cycling
+  // past eight is an ambiguity the label beside each bar resolves, not a
+  // false ordering.
+  var CAT_ORDER = [1, 5, 6, 7, 8, 3, 2, 4];
+  function catToken(i) { return 'var(--c-' + CAT_ORDER[i % 8] + ')'; }
+
+  function bar(label, amount, pct, colour) {
+    return '<div class="tiny" style="margin-bottom:6px">' +
+      '<div class="row" style="justify-content:space-between;gap:var(--s-2);flex-wrap:nowrap">' +
+        '<span class="muted mono" style="overflow:hidden;text-overflow:ellipsis">' + esc(label) + '</span>' +
+        '<span class="mono">$' + amount.toFixed(3) + '</span>' +
+      '</div>' +
+      '<div class="bar" style="margin-top:3px"><i style="width:' + pct + '%;background:' + colour + '"></i></div>' +
+    '</div>';
+  }
+
+  var spendLoaded = 0;
+  function loadSpend(force) {
+    if (!force && Date.now() - spendLoaded < 30000) return;
+    spendLoaded = Date.now();
+    api('/api/spend?days=7').then(function (s) {
+      var days = s.byDay || [];
+      var threads = s.byThread || [];
+      var dMax = Math.max.apply(null, days.map(function (d) { return d.costUsd; }).concat([0.0001]));
+      var tMax = Math.max.apply(null, threads.map(function (t) { return t.costUsd; }).concat([0.0001]));
+      // The figure never appears without what it was measured over.
+      var html =
+        '<div class="figure">' +
+          '<span class="value">$' + s.totalUsd.toFixed(2) + '</span>' +
+          '<span class="over">over ' + s.runs + ' run(s) in 7 days' +
+            (s.runs ? ', $' + (s.totalUsd / s.runs).toFixed(3) + ' each' : '') + '</span>' +
+        '</div>' +
+        '<div class="tiny muted mono" style="margin-top:var(--s-3)">by day</div>' +
+        days.map(function (d, i) {
+          return bar(d.day, d.costUsd, Math.round(100 * d.costUsd / dMax), rampToken(i, days.length));
+        }).join('');
+      if (threads.length) {
+        html += '<div class="tiny muted mono" style="margin-top:var(--s-3)">by thread</div>' +
+          threads.map(function (t, i) {
+            return bar(t.key, t.costUsd, Math.round(100 * t.costUsd / tMax), catToken(i));
+          }).join('');
+      }
+      $('spend').innerHTML = html;
+    }).catch(function (e) { $('spend').innerHTML = '<div class="empty">Unavailable: ' + esc(e.message) + '</div>'; });
   }
 
   // ---------------------------------------------------------------------
@@ -631,31 +1268,48 @@
     return Promise.all([api('/api/threads'), api('/api/handover?thread=' + encodeURIComponent(thread()))])
       .then(function (r) {
         var sel = $('thread'), cur = thread();
-        sel.innerHTML = r[0].items.map(function (t) {
-          return '<option value="' + esc(t.name) + '"' + (t.name === cur ? ' selected' : '') + '>' + esc(t.name) + (t.hasContext ? ' •' : '') + '</option>';
-        }).join('');
+        var opts = r[0].items.map(function (t) {
+          return '<option value="' + esc(t.name) + '"' + (t.name === cur ? ' selected' : '') + '>' + esc(t.name) + (t.hasContext ? ' *' : '') + '</option>';
+        });
+        // A thread the server does not list - one just chosen with Follow up,
+        // or one whose runs have aged out of the index - has to survive this
+        // rewrite. Otherwise the selection silently snaps back to whatever
+        // happens to be first in the list and the next message goes there.
+        if (cur && !r[0].items.some(function (t) { return t.name === cur; })) {
+          opts.unshift('<option value="' + esc(cur) + '" selected>' + esc(cur) + '</option>');
+        }
+        sel.innerHTML = opts.join('');
         $('handover').textContent = r[1].exists ? r[1].text : 'No carried context in this thread yet.';
       }).catch(function () {});
   }
   function pollArtifacts() {
     return api('/api/artifacts').then(function (r) {
       $('artifacts').innerHTML = r.items.length ? r.items.map(function (a) {
-        return '<li><a class="grow" href="/artifacts/' + encodeURIComponent(a.name) + '?token=' + encodeURIComponent(TOKEN) + '" target="_blank" rel="noopener">' + esc(a.name) + '</a>' +
-          '<span class="tiny muted">' + Math.max(1, Math.round(a.size / 1024)) + 'kB</span></li>';
-      }).join('') : '<li class="muted small">None.</li>';
+        return '<li><a class="grow small" href="/artifacts/' + encodeURIComponent(a.name) + '?token=' + encodeURIComponent(TOKEN) + '" target="_blank" rel="noopener">' + esc(a.name) + '</a>' +
+          '<span class="tiny muted mono">' + Math.max(1, Math.round(a.size / 1024)) + ' kB</span></li>';
+      }).join('') : '<li class="empty">None.</li>';
     }).catch(function () {});
   }
   function pollScheduled() {
     return api('/api/inbox/scheduled').then(function (r) {
       $('scheduled').innerHTML = r.items.length ? r.items.map(function (i) {
-        return '<li><span class="grow small">' + esc(i.message.slice(0, 70)) + '</span>' +
-          '<span class="tiny muted">' + new Date(i.runAfter).toLocaleString() + (i.repeat ? ' · ' + i.repeat : '') + '</span>' +
-          '<button class="ghost tiny" data-cancel="' + esc(i.id) + '">✕</button></li>';
-      }).join('') : '<li class="muted small">None.</li>';
+        // Seconds are noise on something that fires tomorrow morning.
+        var when = new Date(i.runAfter).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+        return '<li class="stacked"><span class="small">' + esc(i.message.slice(0, 120)) + '</span>' +
+          '<span class="when"><span class="tiny muted mono grow">' + esc(when) + (i.repeat ? '  ' + esc(i.repeat) : '') + '</span>' +
+          '<button class="ghost sm" data-cancel="' + esc(i.id) + '">Cancel</button></span></li>';
+      }).join('') : '<li class="empty">None.</li>';
     }).catch(function () {});
   }
 
-  function connDown() { $('conn').className = 'dot down'; }
+  function setConn(up) {
+    var el = $('conn');
+    el.className = 'conn ' + (up ? 'up' : 'down');
+    $('conn-text').textContent = up
+      ? (lastContact ? ago(lastContact).replace(' ago', '') : 'live')
+      : 'offline';
+  }
+  function connDown() { setConn(false); }
 
   // ---------------------------------------------------------------------
   // The change stream, and the timers it replaces.
@@ -683,7 +1337,7 @@
   function connectStream() {
     if (!window.EventSource) return;
     var es = new EventSource('/api/events?token=' + encodeURIComponent(TOKEN));
-    es.onopen = function () { streamOk = true; retime(); $('conn').className = 'dot up'; };
+    es.onopen = function () { streamOk = true; retime(); setConn(true); };
     es.onmessage = function (ev) {
       var v; try { v = JSON.parse(ev.data); } catch (e) { return; }
       if (v.health !== seen.health) { seen.health = v.health; pollHealth(); }
@@ -708,8 +1362,25 @@
   // where the phone is and only the phone knows that. Everything after it is
   // the server's job, which is what keeps a repeat firing when the page is
   // closed.
+  // A datetime-local value is "YYYY-MM-DDTHH:mm" with no zone, and both
+  // Date.parse and the input itself read it as local time - so the value can
+  // be built from and handed back to a Date without any conversion, as long
+  // as it is never routed through toISOString (which would shift it to UTC).
+  function localInputValue(d) {
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+      'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function whenAtTime() {
+    var t = Date.parse($('when-at').value);
+    return isFinite(t) ? t : NaN;
+  }
+
   function scheduleSpec(v) {
     if (!v) return {};
+    // One-off, so no repeat: a picked calendar date is by definition a date,
+    // not a pattern. The recurring options above remain the way to repeat.
+    if (v === 'at') { var t = whenAtTime(); return isFinite(t) ? { runAfter: t } : {}; }
     if (v === '+1h') return { runAfter: Date.now() + 3600e3 };
     var m = /^(?:(daily|weekdays|weekly):)?(\d{2}):(\d{2})$/.exec(v);
     if (!m) return {};
@@ -718,6 +1389,82 @@
     if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
     if (m[1] === 'weekdays') while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
     return { runAfter: d.getTime(), repeat: m[1] || null };
+  }
+
+  // Showing the picker changes the height of a fixed bar that the page pads
+  // itself against, so every path that toggles it has to re-measure or the
+  // last line of the view ends up underneath it.
+  function syncWhen() {
+    var on = $('when').value === 'at';
+    $('when-at-row').classList.toggle('hidden', !on);
+    if (on) {
+      // The browser will not stop a past date on its own, but min at least
+      // greys it out in the native picker rather than failing after the tap.
+      $('when-at').min = localInputValue(new Date());
+      if (!$('when-at').value) {
+        // Open somewhere useful rather than empty: an hour out, rounded up
+        // to the next five minutes.
+        var d = new Date(Date.now() + 3600e3);
+        d.setSeconds(0, 0);
+        d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5);
+        $('when-at').value = localInputValue(d);
+      }
+    }
+    measureBar();
+  }
+
+  // ---------------------------------------------------------------------
+  // Snippets: the handful of prompts that get sent over and over ("what
+  // broke overnight", "run the tests and summarise"). Typing one of those
+  // on a phone, one-handed, on a train, is the thing this app is worst at,
+  // so they are one tap and they live next to the box they fill.
+  function snippets() { return LS.get('snippets', ['Status update, two lines', 'Run the tests and summarise failures', 'What changed since my last message?']); }
+  function renderSnips() {
+    var box = $('snips');
+    box.innerHTML = '';
+    snippets().forEach(function (text, i) {
+      var b = document.createElement('button');
+      b.className = 'snip'; b.textContent = text; b.title = text;
+      b.onclick = function () {
+        var m = $('msg');
+        m.value = m.value ? m.value.replace(/\s*$/, '\n') + text : text;
+        m.focus(); saveDraft();
+      };
+      // Long-press or right-click removes it, so a snippet list cannot
+      // silt up with things typed once.
+      var hold = null;
+      b.oncontextmenu = function (e) { e.preventDefault(); removeSnip(i); };
+      b.addEventListener('touchstart', function () { hold = setTimeout(function () { removeSnip(i); }, 650); }, { passive: true });
+      b.addEventListener('touchend', function () { clearTimeout(hold); });
+      b.addEventListener('touchmove', function () { clearTimeout(hold); });
+      box.appendChild(b);
+    });
+    var add = document.createElement('button');
+    add.className = 'snip add';
+    add.textContent = '+ save draft';
+    add.title = 'Save what is in the message box as a reusable snippet';
+    add.onclick = function () {
+      var text = $('msg').value.trim();
+      if (!text) { $('msg').focus(); return; }
+      LS.set('snippets', snippets().concat([text.slice(0, 120)]).slice(-12));
+      renderSnips();
+    };
+    box.appendChild(add);
+    measureBar();
+  }
+  function removeSnip(i) {
+    var list = snippets();
+    if (!confirm('Remove snippet "' + list[i] + '"?')) return;
+    list.splice(i, 1); LS.set('snippets', list); renderSnips();
+  }
+
+  // Draft autosave. A half-typed message lost to a backgrounded tab is the
+  // most annoying thing a phone app can do, and it costs one localStorage
+  // write per keystroke pause to never do it.
+  var draftTimer = null;
+  function saveDraft() {
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(function () { LS.set('draft', $('msg').value); }, 400);
   }
 
   // ---------------------------------------------------------------------
@@ -730,7 +1477,19 @@
   // (as opposed to a lost request) can never queue the same message twice.
   function newClientId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
+  // The outbox used to be completely invisible: a parked message looked
+  // exactly like a message that was never written. The masthead now carries
+  // its depth whenever it is non-empty, and tapping it forces a flush.
+  function renderOutbox() {
+    var n = LS.get('outbox', []).length;
+    var btn = $('outbox-btn');
+    btn.hidden = !n;
+    btn.textContent = n + ' parked';
+    btn.className = 'ghost sm' + (n ? ' danger' : '');
+  }
+
   function flushOutbox() {
+    renderOutbox();
     var box = LS.get('outbox', []);
     if (!box.length) return;
     var chain = Promise.resolve();
@@ -756,6 +1515,7 @@
       if (!resolved.length) return;
       var current = LS.get('outbox', []);
       LS.set('outbox', current.filter(function (e) { return resolved.indexOf(e.payload.clientId) === -1; }));
+      renderOutbox();
       pollHealth(); pollScheduled();
     });
   }
@@ -763,6 +1523,14 @@
   function send() {
     var text = $('msg').value.trim();
     if (!text) return;
+    // scheduleSpec falls back to {} on a value it cannot read, and {} means
+    // "run now" - so an unfilled or past picker would silently send instead
+    // of scheduling. Catch it here, where there is still someone to tell.
+    if ($('when').value === 'at') {
+      var at = whenAtTime();
+      if (!isFinite(at)) { alert('Pick a date and time first.'); $('when-at').focus(); return; }
+      if (at <= Date.now()) { alert('That time has already passed.'); $('when-at').focus(); return; }
+    }
     var payload = Object.assign({
       message: text,
       thread: thread(),
@@ -774,6 +1542,9 @@
     post('/api/inbox', payload).then(function () {
       $('msg').value = '';
       $('when').value = '';
+      $('when-at').value = '';
+      syncWhen();
+      LS.set('draft', '');
       pollHealth(); pollScheduled();
     }).catch(function (e) {
       if (e.status === undefined) {
@@ -782,10 +1553,13 @@
         // was refused.
         var box = LS.get('outbox', []).concat([{ payload: payload, at: Date.now() }]).slice(-20);
         LS.set('outbox', box);
+        renderOutbox();
         var btn = $('send');
         var was = btn.textContent;
-        btn.textContent = 'Saved to outbox';
+        btn.textContent = 'Parked';
         setTimeout(function () { btn.textContent = was; }, 1600);
+        $('msg').value = '';
+        LS.set('draft', '');
       } else {
         if (!$('msg').value.trim()) $('msg').value = text;
         alert('Could not queue: ' + e.message);
@@ -858,11 +1632,20 @@
   // Wiring
 
   $('send').onclick = send;
+  $('msg').addEventListener('input', function () { saveDraft(); measureBar(); });
   $('msg').addEventListener('keydown', function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
+    if (e.key === 'Escape') this.blur();
   });
+  $('outbox-btn').onclick = function () { flushOutbox(); };
   $('engine').onchange = function () { LS.set('engine', this.value); fillModels(); };
   $('model').onchange = function () { LS.set('model', this.value); };
+  $('when').onchange = syncWhen;
+  $('when-at').onchange = measureBar;
+  $('when-at-clear').onclick = function () {
+    $('when').value = ''; $('when-at').value = ''; syncWhen();
+  };
+
   $('thread').onchange = function () { LS.set('thread', this.value); pollContext(); };
   $('thread-new').onclick = function () {
     var name = prompt('Thread name (letters, numbers and dashes):');
@@ -874,7 +1657,7 @@
     pollContext();
   };
   $('thread-clear').onclick = function () {
-    if (!confirm('Clear this thread’s carried context and session?')) return;
+    if (!confirm('Clear the carried context and session for this thread?')) return;
     post('/api/handover/clear', { thread: thread() }).then(pollContext);
   };
   $('run-kill').onclick = function () { post('/api/run/kill').then(pollHealth); };
@@ -884,13 +1667,21 @@
     post('/api/run/nudge', { text: text }).then(function () { $('run-steer').value = ''; pollHealth(); })
       .catch(function (e) { alert('Could not steer: ' + e.message); });
   };
+  $('run-steer').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('run-steer-go').click(); });
   $('failed-retry').onclick = function () { post('/api/inbox/retry').then(function () { pollHealth(); }); };
   $('failed-dismiss').onclick = function () { post('/api/inbox/dismiss-failed').then(pollHealth); };
   $('scheduled').onclick = function (e) {
     var id = e.target.getAttribute('data-cancel');
     if (id) api('/api/inbox/scheduled?id=' + encodeURIComponent(id), { method: 'DELETE' }).then(pollScheduled);
   };
-  $('search-go').onclick = function () {
+  $('opt-vibrate').checked = LS.get('vibrate', true);
+  $('opt-vibrate').onchange = function () { LS.set('vibrate', this.checked); };
+  $('opt-wake').checked = LS.get('wake', false);
+  $('opt-wake').disabled = !('wakeLock' in navigator);
+  $('wake-note').textContent = 'wakeLock' in navigator ? '' : 'This browser has no Screen Wake Lock.';
+  $('opt-wake').onchange = function () { LS.set('wake', this.checked); syncWakeLock(); };
+
+  function runSearch() {
     var q = $('search').value.trim();
     // Merge, do not replace: the ring and the archive can each hold something
     // the other does not, and an unreachable server has to say so rather than
@@ -899,7 +1690,7 @@
       api('/api/messages?limit=100&q=' + encodeURIComponent(q)).catch(function () { return null; }),
       api('/api/notifications').catch(function () { return { items: [] }; })
     ]).then(function (r) {
-      if (!r[0]) { $('search-note').textContent = 'Archive unreachable — showing recent replies only.'; renderReplies(r[1].items); return; }
+      if (!r[0]) { $('search-note').textContent = 'Archive unreachable - showing recent replies only.'; renderReplies(r[1].items); return; }
       var byId = {};
       r[0].items.concat(r[1].items).forEach(function (n) { byId[n.id] = n; });
       var merged = Object.keys(byId).map(function (k) { return byId[k]; })
@@ -908,7 +1699,13 @@
       $('search-note').textContent = q ? merged.length + ' match(es) across ' + r[0].total + ' archived' : '';
       renderReplies(merged.slice(0, 100));
     });
-  };
+  }
+  $('search-go').onclick = runSearch;
+  $('search').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') runSearch();
+    if (e.key === 'Escape') { this.value = ''; this.blur(); pollNotifications(); }
+  });
+
   $('log-go').onclick = function () {
     api('/api/logs?tail=200&file=' + encodeURIComponent($('log-file').value))
       .then(function (r) { $('log-out').textContent = r.lines.join('\n') || (r.note || 'empty'); })
@@ -921,9 +1718,9 @@
     api('/api/artifacts/search?limit=50&q=' + encodeURIComponent(q)).then(function (r) {
       box.innerHTML = r.items.length ? r.items.map(function (a) {
         return '<li><a class="grow small" href="/artifacts/' + encodeURIComponent(a.name) + '?token=' + encodeURIComponent(TOKEN) + '" target="_blank" rel="noopener">' + esc(a.name) + '</a></li>' +
-          (a.snippet ? '<li class="tiny muted" style="border-top:0;padding-top:0">…' + esc(a.snippet) + '…</li>' : '');
-      }).join('') : '<li class="muted small">No matches.</li>';
-    }).catch(function (e) { box.innerHTML = '<li class="muted small">search failed: ' + esc(e.message) + '</li>'; });
+          (a.snippet ? '<li class="tiny muted" style="border-top:0;padding-top:0">' + esc(a.snippet) + '</li>' : '');
+      }).join('') : '<li class="empty">No matches.</li>';
+    }).catch(function (e) { box.innerHTML = '<li class="empty">search failed: ' + esc(e.message) + '</li>'; });
   };
 
   // Read-only preview + delete-what-you-confirm, reusing the existing
@@ -933,10 +1730,10 @@
     post('/api/artifacts/prune', { days: days }).then(function (r) {
       var list = $('art-prune-list');
       list.innerHTML = r.items.length ? r.items.map(function (a) {
-        return '<li><label class="row grow small"><input type="checkbox" checked data-name="' + esc(a.name) + '">' +
+        return '<li><label class="row grow small" style="gap:var(--s-2)"><input type="checkbox" checked data-name="' + esc(a.name) + '" style="width:auto;padding:0">' +
           '<span class="grow">' + esc(a.name) + '</span>' +
-          '<span class="tiny muted">' + Math.max(1, Math.round(a.size / 1024)) + 'kB</span></label></li>';
-      }).join('') : '<li class="muted small">Nothing older than ' + days + ' day(s).</li>';
+          '<span class="tiny muted mono">' + Math.max(1, Math.round(a.size / 1024)) + ' kB</span></label></li>';
+      }).join('') : '<li class="empty">Nothing older than ' + days + ' day(s).</li>';
       $('art-prune-delete').classList.toggle('hidden', !r.items.length);
     });
   };
@@ -953,18 +1750,16 @@
     });
   };
 
-  $('spend-details').addEventListener('toggle', function () {
-    if (!this.open) return;
-    api('/api/spend?days=7').then(function (s) {
-      var max = Math.max.apply(null, s.byDay.map(function (d) { return d.costUsd; }).concat([0.0001]));
-      $('spend').innerHTML =
-        '<div style="margin-bottom:8px">$' + s.totalUsd.toFixed(2) + ' over ' + s.runs + ' run(s)</div>' +
-        s.byDay.map(function (d) {
-          return '<div class="tiny muted" style="margin-bottom:4px">' + d.day + ' — $' + d.costUsd.toFixed(3) +
-            '<div class="bar"><i style="width:' + Math.round(100 * d.costUsd / max) + '%"></i></div></div>';
-        }).join('') +
-        '<div class="tiny muted" style="margin-top:8px">' + s.byThread.map(function (t) { return esc(t.key) + ' $' + t.costUsd.toFixed(3); }).join(' · ') + '</div>';
-    }).catch(function (e) { $('spend').textContent = 'unavailable: ' + e.message; });
+  // Desktop keyboard. Guarded on "is the reader typing", because a page
+  // whose number keys hijack a message is worse than one with no shortcuts.
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var t = e.target, tag = (t && t.tagName) || '';
+    if (/INPUT|TEXTAREA|SELECT/.test(tag) || (t && t.isContentEditable)) return;
+    var i = ['1', '2', '3', '4'].indexOf(e.key);
+    if (i !== -1) { setView(VIEWS[i]); e.preventDefault(); return; }
+    if (e.key === '/') { setView('replies'); $('search').focus(); e.preventDefault(); return; }
+    if (e.key === 'c') { setView('now'); $('msg').focus(); e.preventDefault(); }
   });
 
   // Service worker. REQUIRED_SW_VERSION and SW_VERSION are bumped together; the
@@ -981,7 +1776,7 @@
         var ch = new MessageChannel();
         ch.port1.onmessage = function (e) {
           if (e.data && e.data.version < REQUIRED_SW_VERSION) {
-            $('push-note').textContent = 'An old service worker is still active — close every tab of this page and reopen it.';
+            $('push-note').textContent = 'An old service worker is still active - close every tab of this page and reopen it.';
           }
         };
         reg.active.postMessage({ type: 'version' }, [ch.port2]);
@@ -990,17 +1785,32 @@
   }
 
   window.addEventListener('online', flushOutbox);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) flushOutbox(); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    flushOutbox();
+    syncWakeLock();
+  });
 
   // Kick off
   $('thread').innerHTML = '<option>' + esc(LS.get('thread', 'main')) + '</option>';
+  $('msg').value = LS.get('draft', '');
+  setView(view);
+  measureBar();
+  renderSnips();
+  renderOutbox();
   pollHealth().then(fillEngines);
   pollState(); pollNotifications(); pollContext(); pollArtifacts(); pollScheduled();
   renderPinned();
   setupPush();
   retime();
   connectStream();
-  setInterval(function () { if (health && health.activeRun) renderRunBox(health.activeRun); }, 1000);
+  // One second: the run elapsed time and the "last heard from" reading are
+  // both relative, and a clock that only advances when the server speaks
+  // makes a live page look frozen.
+  setInterval(function () {
+    if (health && health.activeRun) renderRunBox(health.activeRun);
+    if (lastContact) setConn(Date.now() - lastContact < 30000);
+  }, 1000);
 })();
 </script>
 </body>

@@ -26,6 +26,7 @@ const push = require('../src/push');
 const threads = require('../src/threads');
 const engines = require('../src/engines');
 const watcher = require('../src/watcher');
+const which = require('../src/which');
 const halyardBin = require('../bin/halyard.js');
 
 let passed = 0;
@@ -84,6 +85,71 @@ check('threads: only an empty slug falls back to the default', () => {
   // A named thread with no files must NOT resolve to main, or one thread's
   // memory leaks into every mistyped name.
   assert.notStrictEqual(threads.normalize('brand-new'), 'main');
+});
+
+// Command resolution. These build a real fixture tree rather than mocking fs,
+// because every bug this module exists to fix was a bug about what was
+// actually on disk - a stub with the right name, a shim pointing at it, a real
+// binary one directory further down than anyone looked.
+const whichFixture = (() => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-which-'));
+  const pkg = path.join(root, 'node_modules', '@scope', 'tool');
+  fs.mkdirSync(path.join(pkg, 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(pkg, 'node_modules', '@scope', `tool-win32-${os.arch()}`), { recursive: true });
+  fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({
+    name: '@scope/tool',
+    optionalDependencies: { [`@scope/tool-win32-${os.arch()}`]: '1.0.0' },
+  }));
+  // The placeholder postinstall should have overwritten: right name, not a PE.
+  fs.writeFileSync(path.join(pkg, 'bin', 'tool.exe'), 'echo "native binary not installed" >&2\n');
+  // The real one, two levels down where nothing on PATH will ever see it.
+  fs.writeFileSync(path.join(pkg, 'node_modules', '@scope', `tool-win32-${os.arch()}`, 'tool.exe'), Buffer.concat([Buffer.from('MZ'), Buffer.alloc(64)]));
+  // The npm-generated shim, in the shape npm actually writes.
+  fs.writeFileSync(path.join(root, 'tool.cmd'), [
+    '@ECHO off', 'GOTO start', ':find_dp0', 'SET dp0=%~dp0', 'EXIT /b', ':start',
+    'SETLOCAL', 'CALL :find_dp0',
+    '"%dp0%\\node_modules\\@scope\\tool\\bin\\tool.exe"   %*', '',
+  ].join('\n'));
+  return { root, pkg };
+})();
+
+check('which: a placeholder .exe is not mistaken for a real binary', () => {
+  const stub = path.join(whichFixture.pkg, 'bin', 'tool.exe');
+  const real = path.join(whichFixture.pkg, 'node_modules', '@scope', `tool-win32-${os.arch()}`, 'tool.exe');
+  // This is the check that turns an opaque `spawn UNKNOWN` into a diagnosis.
+  assert.ok(!which.isRealExecutable(stub, 'win32'), 'a stub without the MZ header must not pass');
+  assert.ok(which.isRealExecutable(real, 'win32'), 'a file starting MZ is a PE');
+});
+
+check('which: an npm .cmd shim resolves to the executable it wraps', () => {
+  const target = which.shimTarget(path.join(whichFixture.root, 'tool.cmd'));
+  assert.strictEqual(target, path.join(whichFixture.pkg, 'bin', 'tool.exe'));
+  // A path with a space must survive: the unquoted fallback would truncate it.
+  const spaced = path.join(whichFixture.root, 'spaced.cmd');
+  fs.writeFileSync(spaced, '@ECHO off\n"%dp0%\\Program Files\\x\\tool.exe"   %*\n');
+  assert.ok(String(which.shimTarget(spaced)).endsWith(path.join('Program Files', 'x', 'tool.exe')));
+  // Not a shim at all.
+  assert.strictEqual(which.shimTarget(path.join(whichFixture.pkg, 'bin', 'tool.exe')), null);
+});
+
+check('which: the platform-native optional dependency is found behind a stub', () => {
+  const found = which.nativeSibling(path.join(whichFixture.pkg, 'bin', 'tool.exe'), 'win32', os.arch());
+  assert.strictEqual(found, path.join(whichFixture.pkg, 'node_modules', '@scope', `tool-win32-${os.arch()}`, 'tool.exe'));
+});
+
+check('which: an unresolvable command reports why, and never a bare null', () => {
+  const r = which.resolveCommand('halyard-no-such-agent-cli');
+  assert.strictEqual(r.command, null);
+  // The phone shows `problem`; a null here is the opaque ENOENT all over again.
+  assert.ok(r.problem && /not on PATH/.test(r.problem), `unhelpful problem: ${r.problem}`);
+  assert.ok(r.hint, 'a failure the user must fix needs a hint');
+  assert.strictEqual(which.resolveCommand('').problem, 'no command configured');
+});
+
+check('which: an absolute path to a real binary is returned unchanged', () => {
+  const r = which.resolveCommand(process.execPath);
+  assert.strictEqual(r.command, process.execPath);
+  assert.strictEqual(r.problem, null);
 });
 
 check('relay: the tool gate and the command match are both required', () => {
