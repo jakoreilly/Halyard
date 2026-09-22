@@ -34,6 +34,7 @@ const path = require('path');
 const { parserFor, newResult } = require('./engines');
 const lock = require('./lock');
 const threads = require('./threads');
+const { resolveCommand } = require('./which');
 
 // ---------------------------------------------------------------------------
 // Argument templates
@@ -360,16 +361,33 @@ async function processOne(ctx, item) {
   const result = newResult();
   const prompt = buildPrompt({ item, thread, engine, cfg });
 
+  // Resolved once per run, not once per turn: a resume is the same binary, and
+  // re-running the filesystem probes on every retry would only add ways for a
+  // mid-run reinstall to change the answer underneath us.
+  //
+  // A failure here is reported as a normal run failure rather than thrown. The
+  // phone is waiting on this message, and "the agent cannot be found, here is
+  // why" is an answer it can act on - an unhandled rejection is not.
+  const resolved = resolveCommand(engine.command);
+
   const runWith = async (sessionId) => {
+    if (!resolved.command) {
+      result.exitCode = -1;
+      result.stderr = [
+        `[halyard] cannot run engine "${engineName}": ${resolved.problem}`,
+        resolved.hint ? `[halyard] ${resolved.hint}` : '',
+      ].filter(Boolean).join('\n');
+      return result;
+    }
     const args = buildArgs(engine.args, {
       workspace: cfg.workspace,
       permissionMode: cfg.permissionMode,
       model: (engine.modelMap && engine.modelMap[item.model]) || item.model || '',
       session: sessionId || '',
     });
-    log.info(`run ${runId}: ${engine.command} ${args.join(' ')}`, { thread: thread.name, engine: engineName });
+    log.info(`run ${runId}: ${resolved.command} ${args.join(' ')}`, { thread: thread.name, engine: engineName });
     return runAgent({
-      command: engine.command,
+      command: resolved.command,
       args,
       cwd: cfg.workspace,
       prompt,
