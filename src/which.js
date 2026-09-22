@@ -123,8 +123,11 @@ function shimTarget(shim) {
   const raw = quoted || text.match(/%~?dp0%\\?(\S+)/i);
   if (!raw) return null;
   // The shim's own %dp0% ends in a separator, so a leading one here is a
-  // doubled separator, not an absolute path.
-  const rel = raw[1].replace(/^[\\/]+/, '');
+  // doubled separator, not an absolute path. The shim's own text is always
+  // Windows path syntax regardless of what OS is parsing it here - normalize
+  // to forward slashes so path.resolve joins it correctly on POSIX too,
+  // rather than treating a literal backslash as part of a filename.
+  const rel = raw[1].replace(/^[\\/]+/, '').replace(/\\/g, '/');
   if (!rel) return null;
   return path.resolve(dir, rel);
 }
