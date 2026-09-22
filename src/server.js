@@ -1001,11 +1001,40 @@ function createServer(ctx) {
   // defines its own reader (or is hand-authored and doesn't want one) is left
   // exactly as it is.
   const ARTIFACT_READER_SNIPPET = `
-<div id="halyard-reader" style="position:fixed;left:0;right:0;bottom:0;z-index:999;display:flex;align-items:center;gap:8px;padding:8px 12px;background:#161b23;color:#e6edf3;border-top:1px solid #2a323f;font:13px -apple-system,system-ui,sans-serif">
-  <button id="hr-play" style="background:#5eb3ff;color:#06121f;border:0;border-radius:8px;padding:6px 10px;font-weight:600;cursor:pointer">Read aloud</button>
-  <button id="hr-stop" style="background:transparent;color:#e6edf3;border:1px solid #2a323f;border-radius:8px;padding:6px 10px;cursor:pointer;display:none">Stop</button>
-  <button id="hr-speed" style="background:transparent;color:#93a1b3;border:1px solid #2a323f;border-radius:8px;padding:6px 8px;cursor:pointer">1x</button>
-  <span id="hr-status" style="color:#93a1b3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+<style>
+/* Scoped to #halyard-reader so it cannot restyle the artifact it is
+   spliced into. Inline styles were used here originally, but an inline
+   style cannot carry a media query, and the bar has to follow the
+   reader's theme - a dark slab across the bottom of a light report is
+   the most visible thing on the page and says nothing. */
+#halyard-reader {
+  --hr-bg: #f4f4f1; --hr-ink: #17181a; --hr-sub: #6a6d73; --hr-line: #d6d5d0; --hr-page: #fbfbf9;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 999;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--hr-bg); color: var(--hr-ink);
+  border-top: 1px solid var(--hr-line);
+  font: 13px system-ui, "Segoe UI Variable Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  #halyard-reader { --hr-bg: #17181a; --hr-ink: #e8e7e4; --hr-sub: #8d8d94; --hr-line: #2f3036; --hr-page: #0f1011; }
+}
+#halyard-reader button {
+  font: inherit; cursor: pointer; border-radius: 5px; padding: 6px 10px;
+  background: transparent; color: var(--hr-ink); border: 1px solid var(--hr-line);
+}
+#halyard-reader button:active { transform: translateY(1px); }
+#halyard-reader button:focus-visible { outline: 2px solid var(--hr-ink); outline-offset: 2px; }
+#halyard-reader #hr-play { background: var(--hr-ink); color: var(--hr-page); border-color: var(--hr-ink); font-weight: 550; }
+#halyard-reader #hr-speed { color: var(--hr-sub); font-variant-numeric: tabular-nums; }
+#halyard-reader #hr-status { color: var(--hr-sub); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media print { #halyard-reader { display: none; } }
+</style>
+<div id="halyard-reader">
+  <button id="hr-play">Read aloud</button>
+  <button id="hr-stop" style="display:none">Stop</button>
+  <button id="hr-speed">1x</button>
+  <span id="hr-status"></span>
 </div>
 <script>
 (function () {
@@ -1175,7 +1204,7 @@ function createServer(ctx) {
         return json(res, 200, {
           name: 'Halyard', short_name: 'Halyard',
           start_url: `/?token=${encodeURIComponent(token)}`,
-          display: 'standalone', background_color: '#0e1116', theme_color: '#0e1116',
+          display: 'standalone', background_color: '#fbfbf9', theme_color: '#fbfbf9',
           icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
         });
       }
