@@ -25,6 +25,7 @@ const { createClient } = require('../src/client');
 const watcher = require('../src/watcher');
 const pushmod = require('../src/push');
 const lockmod = require('../src/lock');
+const { whichSync, resolveCommand } = require('../src/which');
 
 const pkg = require('../package.json');
 
@@ -253,10 +254,22 @@ async function cmdDoctor(argv) {
   line('relay', cfg.relay.enabled ? `on (${cfg.relay.rules.join(', ')})` : 'OFF');
 
   console.log('\n  Engines');
+  const engineHints = [];
   for (const e of Object.values(cfg.engines)) {
-    const found = e.command ? whichSync(e.command) : null;
+    // The same resolver the watcher uses, so this line is what will actually
+    // be spawned rather than a second opinion about it. The old code stopped
+    // at "found on PATH", which reported a Windows .CMD shim as healthy right
+    // up until the run failed with ENOENT.
+    const r = resolveCommand(e.command);
     const mark = e.name === cfg.defaultEngine ? '*' : ' ';
-    console.log(`  ${mark} ${e.name.padEnd(10)} ${found ? found : (e.command ? `${e.command}  NOT ON PATH` : 'no command configured')}${e.supportsRelayHook ? '' : '   [no pre-tool hook: relay cannot arm]'}`);
+    const relay = e.supportsRelayHook ? '' : '   [no pre-tool hook: relay cannot arm]';
+    // 'path' is the unremarkable case and says nothing; the other two mean the
+    // configured command is not the thing being run, which is worth seeing.
+    const via = r.command && r.source !== 'path' ? `   [via ${r.source}]` : '';
+    console.log(`  ${mark} ${e.name.padEnd(10)} ${r.command ? `${r.command}${via}` : r.problem}${relay}`);
+    if (!r.command && r.hint && e.name === cfg.defaultEngine) {
+      engineHints.push(`${e.name}: ${r.hint}`);
+    }
   }
 
   console.log('\n  Runtime');
@@ -267,30 +280,12 @@ async function cmdDoctor(argv) {
   line('server', health ? `up  (${health.queued} queued, ${health.scheduled} scheduled)` : 'not reachable');
   if (health) line('push', `${health.push.subscribers} subscriber(s)`);
 
-  if (warnings.length) {
+  if (warnings.length || engineHints.length) {
     console.log('\n  Worth knowing');
     for (const w of warnings) console.log(`  ${w.level === 'warn' ? '!' : 'i'}  ${w.msg}`);
+    for (const h of engineHints) console.log(`  !  ${h}`);
   }
   console.log('');
-}
-
-// A `which` that does not shell out, so it behaves the same everywhere and
-// cannot be tricked by a shell alias.
-function whichSync(cmd) {
-  if (cmd.includes(path.sep) || cmd.includes('/')) return fs.existsSync(cmd) ? cmd : null;
-  const exts = process.platform === 'win32'
-    ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';')
-    : [''];
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-    if (!dir) continue;
-    for (const ext of exts) {
-      const full = path.join(dir, cmd + ext);
-      try {
-        if (fs.statSync(full).isFile()) return full;
-      } catch (e) { /* next */ }
-    }
-  }
-  return null;
 }
 
 async function cmdToken(argv) {
