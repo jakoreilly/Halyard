@@ -48,9 +48,23 @@ process.stdin.on('end', () => {
   emit({
     type: 'result',
     session_id: 'sess-123',
-    result: got + String.fromCharCode(10) + 'HANDOVER: carried this over',
+    // The port the hooks will be pointed at, echoed so the test can see the
+    // watcher's environment actually reached the agent.
+    result: got + ' port=' + (process.env.HALYARD_PORT || 'unset') + String.fromCharCode(10) + 'HANDOVER: carried this over',
     total_cost_usd: 0.0123, duration_ms: 2500, num_turns: 3,
   });
+  if (process.env.FAKE_SLOW === '1') {
+    // A tool call's leftover child plus an agent that never finishes: the
+    // shape a Stop from the phone has to clean up. The grandchild's pid goes
+    // to a file so the test can check it was killed too. Detached, because a
+    // node agent's ordinary children sit in a job object that dies with it on
+    // Windows - they would "pass" with no tree kill at all. A detached one
+    // breaks away from that job, as a non-node agent's children never had it.
+    const gc = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: true, windowsHide: true });
+    require('fs').writeFileSync(process.env.FAKE_PIDFILE, String(gc.pid));
+    setTimeout(() => process.exit(0), 60000);
+    return;
+  }
   if (process.env.FAKE_HANG === '1') {
     // A grandchild that inherits stdout and stderr and holds them open long
     // after this process is gone. Without a bound on the post-exit read, the
@@ -108,6 +122,7 @@ async function main() {
 
   try {
     // --- the happy path --------------------------------------------------
+    const agentArgs = cfg.engines.fake.args.slice();
     await client.post('/api/inbox', { message: 'do the thing SENTINEL "quoted phrase" END', thread: 'work', model: 'fast' });
     const consumed = await watcher.runOnce({ cfg, paths, log, client });
 
@@ -149,6 +164,11 @@ async function main() {
       assert.ok(note.message.includes('$0.0123'));
       record('the reply carries the metadata the ledger needs', null);
     } catch (e) { record('the reply carries the metadata the ledger needs', e); }
+
+    try {
+      assert.ok(note.message.includes(`port=${cfg.port}`), `the agent saw ${/port=\S+/.exec(note.message)}`);
+      record('the agent (and so its hooks) is told the real port', null);
+    } catch (e) { record('the agent (and so its hooks) is told the real port', e); }
 
     try {
       const ledger = fs.readFileSync(paths.runs, 'utf8').trim().split('\n').map(JSON.parse);
@@ -212,6 +232,72 @@ async function main() {
       assert.strictEqual(item.message, 'this will fail');
       record('retry puts the eaten message back at the front', null);
     } catch (e) { record('retry puts the eaten message back at the front', e); }
+
+    // --- the reply is the one post that must not be best-effort ----------
+    cfg.engines.fake.args = agentArgs;
+    let notifyFailures = 1;
+    const flaky = {
+      ...client,
+      post: async (p, b) => {
+        if (p === '/api/notify' && notifyFailures-- > 0) {
+          const err = new Error('POST /api/notify -> 503'); err.status = 503; throw err;
+        }
+        return client.post(p, b);
+      },
+    };
+    const before = (await client.get('/api/notifications')).items.length;
+    await client.post('/api/inbox', { message: 'flaky SENTINEL "quoted phrase" END', thread: 'flaky' });
+    await watcher.runOnce({ cfg, paths, log, client: flaky });
+    try {
+      const notes = (await client.get('/api/notifications')).items;
+      assert.strictEqual(notes.length, before + 1, 'a transient failure must be retried, not dropped');
+      assert.ok(notes[0].message.startsWith('prompt-intact'));
+      record('a reply survives a transient delivery failure', null);
+    } catch (e) { record('a reply survives a transient delivery failure', e); }
+
+    const refusing = {
+      ...client,
+      post: async (p, b) => {
+        if (p === '/api/notify') { const err = new Error('POST /api/notify -> 400'); err.status = 400; throw err; }
+        return client.post(p, b);
+      },
+    };
+    await client.post('/api/inbox', { message: 'refused SENTINEL "quoted phrase" END', thread: 'refused' });
+    await watcher.runOnce({ cfg, paths, log, client: refusing });
+    try {
+      const health = await client.get('/api/health');
+      assert.ok(health.lastFailed && health.lastFailed.message.startsWith('refused'), 'an undelivered reply must leave the message retryable');
+      assert.ok(/could not be delivered/.test(health.lastFailed.reason));
+      assert.strictEqual((await client.get('/api/handover?thread=refused')).exists, false, 'no handover for a turn the phone never saw');
+      record('an undelivered reply fails the run visibly instead of vanishing', null);
+    } catch (e) { record('an undelivered reply fails the run visibly instead of vanishing', e); }
+    await client.post('/api/inbox/dismiss-failed');
+
+    // --- Stop takes the agent's children with it (Windows) ----------------
+    const pidFile = path.join(dir, 'grandchild.pid');
+    process.env.FAKE_SLOW = '1';
+    process.env.FAKE_PIDFILE = pidFile;
+    await client.post('/api/inbox', { message: 'slow', thread: 'slow' });
+    const run = watcher.runOnce({ cfg, paths, log, client });
+    for (let i = 0; i < 100 && !fs.existsSync(pidFile); i++) await new Promise((r) => setTimeout(r, 100));
+    await client.post('/api/run/kill');
+    const killedAt = Date.now();
+    await run;
+    delete process.env.FAKE_SLOW;
+    try {
+      const gcPid = Number(fs.readFileSync(pidFile, 'utf8'));
+      const took = Date.now() - killedAt;
+      assert.ok(took < 10000, `stop took ${took}ms`);
+      if (process.platform === 'win32') {
+        await new Promise((r) => setTimeout(r, 500));
+        assert.strictEqual(require('../src/lock').isAlive(gcPid), false, 'the grandchild outlived Stop');
+      } else {
+        // Only the direct child is killed off Windows; clean up after the test.
+        try { process.kill(gcPid, 'SIGKILL'); } catch (e) { /* already gone */ }
+      }
+      assert.ok(/cancelled/.test((await client.get('/api/health')).lastFailed.reason));
+      record('Stop ends the run, and on Windows its whole process tree', null);
+    } catch (e) { record('Stop ends the run, and on Windows its whole process tree', e); }
   } finally {
     await app.close();
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* windows holds files briefly */ }

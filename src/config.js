@@ -219,7 +219,12 @@ function load(opts) {
   // Engines: built-ins are the base, user entries merge on top, so overriding
   // just `command` (a binary that is not on PATH) does not mean restating the
   // whole argument template.
-  const engines = {};
+  //
+  // No prototype: every "is this a configured engine?" check is a plain
+  // `cfg.engines[name]` lookup on a name the phone supplies, and on an ordinary
+  // object `constructor` or `toString` passes it - queueing a message for an
+  // "engine" with no command, which then fails the run.
+  const engines = Object.create(null);
   for (const [name, def] of Object.entries(BUILTIN_ENGINES)) engines[name] = { ...def, name };
   for (const [name, def] of Object.entries(cfg.engines || {})) {
     const base = engines[name] || { name, label: name, stream: 'text', args: [], modelMap: {}, supportsRelayHook: false };
@@ -236,6 +241,18 @@ function load(opts) {
   }
   cfg.port = Number(cfg.port) || DEFAULTS.port;
   return cfg;
+}
+
+// Whether `inner` is `outer` or sits somewhere under it. Not a startsWith on
+// `outer + sep`: a root already ends in its separator (`C:\`, `/`), so that
+// test built `C:\\` and `//` and missed the two widest workspaces there are.
+// Case-insensitive on Windows, where `c:\users\me` and `C:\Users\me` are one
+// directory.
+function containsPath(outer, inner, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const norm = (s) => (platform === 'win32' ? p.resolve(s).toLowerCase() : p.resolve(s));
+  const rel = p.relative(norm(outer), norm(inner));
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${p.sep}`) && !p.isAbsolute(rel));
 }
 
 // Non-fatal advisories, surfaced by `halyard doctor` and on the phone's status
@@ -263,8 +280,7 @@ function audit(cfg) {
       msg: 'Approve/deny relay is disabled. Unattended runs can commit, push, delete recursively and upload with no confirmation.',
     });
   }
-  const home = os.homedir();
-  if (cfg.workspace === home || home.startsWith(cfg.workspace + path.sep)) {
+  if (containsPath(cfg.workspace, os.homedir())) {
     out.push({
       level: 'warn',
       msg: `Workspace is ${cfg.workspace}, which contains your whole home directory. Narrow it unless you mean it.`,
@@ -289,4 +305,4 @@ function audit(cfg) {
   return out;
 }
 
-module.exports = { DEFAULTS, BUILTIN_ENGINES, ENV_MAP, load, audit, deepMerge, setPath };
+module.exports = { DEFAULTS, BUILTIN_ENGINES, ENV_MAP, load, audit, deepMerge, setPath, containsPath };

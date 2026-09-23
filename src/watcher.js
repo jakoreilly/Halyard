@@ -66,6 +66,51 @@ function buildArgs(template, vars) {
 // ---------------------------------------------------------------------------
 // Running the agent
 
+// Stop and the run budget have to take the agent's children with it. On
+// Windows child.kill() ends only the direct process, so the shell or dev
+// server a tool call started keeps running after the phone was told the run
+// stopped - and keeps the pipes open, so the run then sits out the whole
+// post-exit bound as well. taskkill /T walks the tree. POSIX keeps the plain
+// kill: a process-group kill needs the agent spawned detached, which would
+// also stop a Ctrl+C on `halyard start` from reaching it.
+function killTree(child) {
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      const tk = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      tk.on('error', () => { try { child.kill('SIGKILL'); } catch (e) { /* already dead */ } });
+      return;
+    } catch (e) {
+      // Fall through to the plain kill.
+    }
+  }
+  try { child.kill('SIGKILL'); } catch (e) { /* already dead */ }
+}
+
+// The hooks run inside the agent's process tree, not inside Halyard, so the
+// only things they know about this install are what reaches them through the
+// environment. Without these they fall back to port 4545 and the default data
+// dir: on any other port, or with --data-dir, every relayed command is denied
+// as "Halyard unreachable", and relay.timeoutMs and relay.rules from the config
+// file never take effect at all. `halyard ask` run by the agent reads the same
+// variables through the normal config layering.
+function hookEnv({ cfg, paths, client }) {
+  const env = {
+    HALYARD_DATA_DIR: paths.root,
+    HALYARD_PORT: String(cfg.port),
+  };
+  // The client's base already maps a wildcard bind onto loopback and brackets
+  // an IPv6 host, so the hooks reach exactly what the watcher reaches.
+  if (client && client.base) env.HALYARD_URL = client.base;
+  const relay = cfg.relay || {};
+  if (Number.isFinite(Number(relay.timeoutMs)) && Number(relay.timeoutMs) > 0) {
+    env.HALYARD_RELAY_TIMEOUT_MS = String(Math.trunc(Number(relay.timeoutMs)));
+  }
+  // An empty list is left unset rather than passed as '', although the hook
+  // reads both as "all rules" - absent is the one reading nothing can get wrong.
+  if (Array.isArray(relay.rules) && relay.rules.length) env.HALYARD_RELAY_RULES = relay.rules.join(',');
+  return env;
+}
+
 // Resolves when the agent is finished AND we have stopped waiting for its
 // pipes - whichever of those comes first, subject to the bounds above.
 function runAgent(opts) {
@@ -224,16 +269,16 @@ function runAgent(opts) {
     // --- the two ways a run ends early --------------------------------------
     hardTimer = setTimeout(() => {
       result.timedOut = true;
-      try { child.kill('SIGKILL'); } catch (e) { /* already dead */ }
+      killTree(child);
       // Do not resolve here. The exit handler runs next and applies the same
       // bounded drain, so a reply that had already been emitted is still read.
     }, runTimeoutMs);
 
     killPoll = setInterval(async () => {
       try {
-        if (await isKillRequested()) {
+        if (!result.killed && await isKillRequested()) {
           result.killed = true;
-          child.kill('SIGKILL');
+          killTree(child);
         }
       } catch (e) {
         // A health check failing is not a reason to kill a working run.
@@ -395,6 +440,7 @@ async function processOne(ctx, item) {
       result,
       postExitTimeoutMs: cfg.postExitTimeoutMs,
       runTimeoutMs: cfg.runTimeoutMs,
+      env: hookEnv({ cfg, paths, client }),
       log,
       onActivity: ({ activity, draft }) => {
         // Fire and forget. An activity update that fails to post costs one
@@ -457,26 +503,65 @@ async function processOne(ctx, item) {
   }
 
   const { body, handover } = splitHandover(result.reply);
-  if (handover !== null) threads.writeHandover(paths, thread.name, handover);
 
-  await client.tryPost('/api/notify', {
-    message: body + changeFooter(result),
-    thread: thread.name,
-    engine: engineName,
-    prompt: item.message,
-    model: item.model || '',
-    costUsd: result.costUsd,
-    durationMs: result.durationMs,
-    numTurns: result.numTurns,
-  });
+  // A reply that was nothing but its HANDOVER line leaves an empty body, and
+  // /api/notify refuses an empty message - so without a placeholder the phone
+  // would get no reply at all for a run that succeeded.
+  const message = (body || '(the agent finished without any reply text)') + changeFooter(result);
+  try {
+    // NOT tryPost. This is the only copy of the reply, and invariant 2 says a
+    // popped message must produce one: a swallowed failure here was the run
+    // succeeding, the cost being spent, and the phone never hearing back.
+    await postWithRetry(client, '/api/notify', {
+      message,
+      thread: thread.name,
+      engine: engineName,
+      prompt: item.message,
+      model: item.model || '',
+      costUsd: result.costUsd,
+      durationMs: result.durationMs,
+      numTurns: result.numTurns,
+    });
+  } catch (e) {
+    // Logged in full so the answer is recoverable from halyard.log even though
+    // the phone never got it, then thrown so runOnce reports the failure and
+    // leaves the message retryable.
+    log.error(`reply for ${item.id} could not be delivered; its text follows`, { thread: thread.name, reply: message });
+    throw new Error(`the run finished but its reply could not be delivered (${e.message})`);
+  }
+
+  // Written only once the reply has landed. An undelivered turn is retried
+  // from the phone, and the retry should start from the context the phone
+  // last saw, not from a summary of an answer it never received.
+  if (handover !== null) threads.writeHandover(paths, thread.name, handover);
   return { runId, engine: engineName };
+}
+
+// Retries a throwing post with a short backoff. Sized to ride out a server
+// restart (routine here - the agent is allowed to restart it), not an outage.
+// A 4xx is the server refusing this body, and sending it again changes nothing.
+async function postWithRetry(client, p, body, { attempts = 4, delayMs = 1000 } = {}) {
+  for (let i = 1; ; i++) {
+    try {
+      return await client.post(p, body);
+    } catch (e) {
+      if (i >= attempts || (e.status >= 400 && e.status < 500)) throw e;
+      await new Promise((resolve) => setTimeout(resolve, delayMs * 2 ** (i - 1)));
+    }
+  }
 }
 
 // Pops at most one message and runs it. Returns true if it consumed one, which
 // is what makes the self-retrigger chain below terminate.
 async function runOnce(ctx) {
   const { cfg, client, paths, log } = ctx;
-  const release = lock.acquire(paths.lockDir, 'watch', { maxAgeMs: cfg.runTimeoutMs, log });
+  // The age limit has to cover the longest LEGITIMATE hold, not one run: a
+  // stale session retakes the turn, so one message can be two full runs, each
+  // with its post-exit drain, plus the reply's delivery retries. Sized to
+  // runTimeoutMs alone, a second watcher (a `halyard watch` timer) reaped the
+  // lock from under a live retake and popped another message beside it.
+  const maxAgeMs = 2 * (cfg.runTimeoutMs + cfg.postExitTimeoutMs) + 60 * 1000;
+  const release = lock.acquire(paths.lockDir, 'watch', { maxAgeMs, log });
   if (!release) {
     log.debug('another run holds the lock; skipping this tick');
     return false;
@@ -548,4 +633,7 @@ function startLoop(ctx) {
   };
 }
 
-module.exports = { runOnce, startLoop, runAgent, buildArgs, buildPrompt, splitHandover, changeFooter, decideReroute, CAPACITY_OR_AUTH };
+module.exports = {
+  runOnce, startLoop, runAgent, buildArgs, buildPrompt, splitHandover, changeFooter, decideReroute, CAPACITY_OR_AUTH,
+  hookEnv, postWithRetry,
+};
