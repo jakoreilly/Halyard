@@ -33,8 +33,10 @@ function dataDir() {
   return path.join(home, '.local', 'state', 'halyard');
 }
 
+// Same resolution as the relay, so the two hooks can never disagree about
+// which bridge they are talking to.
 const PORT = Number(process.env.HALYARD_PORT) || 4545;
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = relay.baseUrl(process.env, PORT);
 const TOKEN_FILE = path.join(dataDir(), 'token.txt');
 
 function passthrough() {

@@ -32,8 +32,16 @@ function dataDir() {
 // 127.0.0.1, never localhost: the server binds loopback IPv4, and a localhost
 // that resolves to ::1 first fails every relay with a connection error - which
 // closes the command as 'bridge unreachable' rather than asking anyone.
+// HALYARD_URL, when the watcher sets it, is the exact base the watcher itself
+// talks to (src/watcher.js hookEnv) - it covers a bind to ::1 or to one
+// specific address, where 127.0.0.1 is not listening at all. Sending the token
+// there is no new exposure: the watcher already does, on every call.
 const PORT = Number(process.env.HALYARD_PORT) || 4545;
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = baseUrl(process.env, PORT);
+function baseUrl(env, port) {
+  const u = String(env.HALYARD_URL || '').replace(/\/+$/, '');
+  return /^https?:\/\/[^\s/?#]+$/i.test(u) ? u : `http://127.0.0.1:${port}`;
+}
 const TOKEN_FILE = path.join(dataDir(), 'token.txt');
 const TIMEOUT_MS = Number(process.env.HALYARD_RELAY_TIMEOUT_MS) || 5 * 60 * 1000;
 const POLL_MS = 3000;
@@ -318,5 +326,5 @@ if (require.main === module) {
 module.exports = {
   MUTATING_GIT, DESTRUCTIVE_FS, NETWORK_EGRESS, RELAY_RULES,
   RELAYED_TOOLS, ATTENDED_MODES, shouldRelay, matchRelayRule, isLoopbackOnly, isUnattended,
-  enabledRules,
+  enabledRules, baseUrl,
 };

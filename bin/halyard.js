@@ -291,7 +291,9 @@ async function cmdDoctor(argv) {
 async function cmdToken(argv) {
   const boot = bootstrap(argv);
   const token = ensureToken(boot.paths, { rotate: !!argv.flags.rotate });
-  if (argv.flags.rotate) console.error('  token rotated - every device must reopen the new link\n');
+  // A running server read its token once at start, so until it restarts it
+  // accepts only the OLD one - the new link 401s and looks like rotation broke.
+  if (argv.flags.rotate) console.error('  token rotated - restart halyard, then reopen the new link on every device\n');
   const host = boot.cfg.publicUrl || `http://127.0.0.1:${boot.cfg.port}`;
   console.log(argv.flags.url ? `${host}/?token=${token}` : token);
 }

@@ -340,6 +340,47 @@ check('config: a corrupt config file falls back instead of throwing', () => {
   fs.unlinkSync(f);
 });
 
+check('config: a drive root or / is flagged as containing home, case-insensitively on Windows', () => {
+  assert.ok(configmod.containsPath('C:\\', 'C:\\Users\\me', 'win32'), 'a drive root contains home');
+  assert.ok(configmod.containsPath('c:\\users\\me', 'C:\\Users\\Me', 'win32'), 'case must not matter on Windows');
+  assert.ok(configmod.containsPath('/', '/home/me', 'linux'));
+  assert.ok(configmod.containsPath('/home/me', '/home/me', 'linux'));
+  assert.ok(!configmod.containsPath('/home/me/project', '/home/me', 'linux'), 'a folder under home is the safe case');
+  assert.ok(!configmod.containsPath('/home/m', '/home/me', 'linux'), 'a sibling that shares a prefix is not a parent');
+});
+
+check('config: an inherited property name is not a configured engine', () => {
+  const cfg = configmod.load({ file: null, env: {}, cli: { workspace: path.join(os.tmpdir(), 'ws') } });
+  for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    assert.ok(!cfg.engines[name], `"${name}" must not look like an engine`);
+  }
+  assert.ok(cfg.engines.claude, 'the built-ins are still there');
+});
+
+check('watcher: the hooks are told this install\'s port, data dir and relay settings', () => {
+  const cfg = configmod.load({ file: null, env: {}, cli: { port: 5123, workspace: path.join(os.tmpdir(), 'ws'), relay: { timeoutMs: 90000, rules: ['git', 'destructive-fs'] } } });
+  const env = watcher.hookEnv({ cfg, paths: { root: '/data/halyard' }, client: { base: 'http://127.0.0.1:5123' } });
+  assert.strictEqual(env.HALYARD_PORT, '5123');
+  assert.strictEqual(env.HALYARD_DATA_DIR, '/data/halyard');
+  assert.strictEqual(env.HALYARD_URL, 'http://127.0.0.1:5123');
+  assert.strictEqual(env.HALYARD_RELAY_TIMEOUT_MS, '90000');
+  assert.strictEqual(env.HALYARD_RELAY_RULES, 'git,destructive-fs');
+  // What the hook does with it: the same rule filter it already had.
+  assert.deepStrictEqual(relay.enabledRules(env).map((r) => r.name), ['git', 'destructive-fs']);
+  // An empty rule list stays unset, which the hook reads as all rules.
+  const all = configmod.load({ file: null, env: {}, cli: { workspace: path.join(os.tmpdir(), 'ws'), relay: { rules: [] } } });
+  assert.ok(!('HALYARD_RELAY_RULES' in watcher.hookEnv({ cfg: all, paths: { root: '/d' } })));
+});
+
+check('relay: the bridge URL comes from HALYARD_URL when it is a bare origin', () => {
+  assert.strictEqual(relay.baseUrl({}, 4545), 'http://127.0.0.1:4545');
+  assert.strictEqual(relay.baseUrl({ HALYARD_URL: 'http://[::1]:5000/' }, 4545), 'http://[::1]:5000');
+  assert.strictEqual(relay.baseUrl({ HALYARD_URL: 'http://192.168.1.5:5000' }, 4545), 'http://192.168.1.5:5000');
+  // Anything that is not a plain origin falls back rather than being trusted.
+  assert.strictEqual(relay.baseUrl({ HALYARD_URL: 'http://x/api?y' }, 4545), 'http://127.0.0.1:4545');
+  assert.strictEqual(relay.baseUrl({ HALYARD_URL: 'file:///etc' }, 5000), 'http://127.0.0.1:5000');
+});
+
 // ---------------------------------------------------------------------------
 // Web Push: play the browser's side and decrypt what encryptPayload produced,
 // from the wire bytes alone.
@@ -673,6 +714,26 @@ async function main() {
     }
     assert.strictEqual((await call('DELETE', '/artifacts/report.html')).status, 200);
     assert.strictEqual((await call('GET', '/api/artifacts')).body.items.length, 0);
+  }));
+
+  await checkAsync('artifacts: a malformed escape is a 400, and a subfolder is not listed as a file', () => withServer(async ({ call, base, token, paths }) => {
+    const bad = await fetch(`${base}/artifacts/100%.html?token=${token}`);
+    assert.strictEqual(bad.status, 400, 'a stray % is a bad link, not a server error');
+    fs.writeFileSync(path.join(paths.artifacts, 'a.txt'), 'x');
+    fs.mkdirSync(path.join(paths.artifacts, 'sub'));
+    const names = (await call('GET', '/api/artifacts')).body.items.map((i) => i.name);
+    assert.deepStrictEqual(names, ['a.txt']);
+  }));
+
+  await checkAsync('auth: the token cookie is HttpOnly', () => withServer(async ({ base, token }) => {
+    const res = await fetch(`${base}/?token=${token}`);
+    assert.ok(/;\s*HttpOnly/i.test(res.headers.get('set-cookie') || ''), res.headers.get('set-cookie'));
+  }));
+
+  await checkAsync('inbox: an inherited property name falls back to the default engine', () => withServer(async ({ call, cfg }) => {
+    await call('POST', '/api/inbox', { message: 'x', engine: 'constructor' });
+    const items = (await call('GET', '/api/inbox')).body.items;
+    assert.strictEqual(items[0].engine, cfg.defaultEngine);
   }));
 
   await checkAsync('artifacts: search matches filenames always, contents for a text allow-list', () => withServer(async ({ call, paths }) => {

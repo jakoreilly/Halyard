@@ -72,6 +72,12 @@ returns.
 | `relay.timeoutMs` | `300000` | No answer inside this window is a **deny**. |
 | `relay.rules` | all three | `git`, `destructive-fs`, `network-egress`. Trim if a category is pure noise for you. An **empty or unset** list means all of them, never none. |
 
+The hooks run inside the agent's process, not inside Halyard, so the watcher hands them this
+install's settings through the environment of every run it starts: `HALYARD_DATA_DIR`,
+`HALYARD_PORT`, `HALYARD_URL`, `HALYARD_RELAY_TIMEOUT_MS` and `HALYARD_RELAY_RULES`. A session
+you start by hand gets none of them, so its hooks use the defaults (port 4545 and the OS data
+dir) unless you export them yourself.
+
 ### Failover
 
 | Key | Default | Notes |

@@ -359,7 +359,11 @@ function createServer(ctx) {
   // One resolver for GET and DELETE both, so the containment check cannot be
   // present on one and missing on the other.
   function resolveArtifact(pathname) {
-    const rel = decodeURIComponent(pathname.replace(/^\/artifacts\/?/, ''));
+    let rel;
+    // A stray `%` (`/artifacts/100%.html`) makes decodeURIComponent throw, and
+    // uncaught that was a 500 plus a stack trace in the log for what is only a
+    // bad link - the caller's 400.
+    try { rel = decodeURIComponent(pathname.replace(/^\/artifacts\/?/, '')); } catch (e) { return null; }
     const full = path.resolve(paths.artifacts, rel);
     const root = path.resolve(paths.artifacts);
     // Prefix-with-separator, not startsWith on the bare root: `/artifacts-evil`
@@ -793,16 +797,25 @@ function createServer(ctx) {
 
   // --- artifacts ---------------------------------------------------------
 
-  route('GET', '/api/artifacts', async (req, res) => {
-    let items = [];
-    try {
-      items = fs.readdirSync(paths.artifacts).map((name) => {
+  // One stat per entry, each in its own try. A single entry that cannot be
+  // stat'd - a dangling symlink, a file deleted between readdir and stat -
+  // used to throw out of the whole map and show the phone an empty folder.
+  // Directories are left out: their links would 404.
+  function listArtifactFiles() {
+    let names = [];
+    try { names = fs.readdirSync(paths.artifacts); } catch (e) { return []; }
+    const out = [];
+    for (const name of names) {
+      try {
         const st = fs.statSync(path.join(paths.artifacts, name));
-        return { name, size: st.size, at: st.mtimeMs };
-      }).filter((f) => f.size >= 0).sort((a, b) => b.at - a.at);
-    } catch (e) {
-      items = [];
+        if (st.isFile()) out.push({ name, size: st.size, at: st.mtimeMs });
+      } catch (e) { /* gone or unreadable - skip just this one */ }
     }
+    return out;
+  }
+
+  route('GET', '/api/artifacts', async (req, res) => {
+    const items = listArtifactFiles().sort((a, b) => b.at - a.at);
     return json(res, 200, { items });
   });
 
@@ -857,18 +870,7 @@ function createServer(ctx) {
     const body = await readJson(req);
     const days = clampInt(body.days, 1, 3650, 30);
     const cutoff = Date.now() - days * 86400 * 1000;
-    let items = [];
-    try {
-      items = fs.readdirSync(paths.artifacts)
-        .map((name) => {
-          const st = fs.statSync(path.join(paths.artifacts, name));
-          return { name, size: st.size, at: st.mtimeMs };
-        })
-        .filter((f) => f.at < cutoff)
-        .sort((a, b) => a.at - b.at);
-    } catch (e) {
-      items = [];
-    }
+    const items = listArtifactFiles().filter((f) => f.at < cutoff).sort((a, b) => a.at - b.at);
     return json(res, 200, { days, items });
   });
 
@@ -1149,9 +1151,11 @@ function createServer(ctx) {
     }
 
     // Set the token as a cookie so in-page navigations and the manifest's
-    // start_url survive without carrying it in every href.
+    // start_url survive without carrying it in every href. HttpOnly because no
+    // script needs to read it - the page takes its token from its own URL -
+    // and an artifact is agent-written HTML served on this same origin.
     if (url.searchParams.get('token')) {
-      res.setHeader('set-cookie', `halyard_token=${encodeURIComponent(token)}; Path=/; SameSite=Strict; Max-Age=31536000${req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''}`);
+      res.setHeader('set-cookie', `halyard_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''}`);
     }
 
     try {
