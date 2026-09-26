@@ -290,7 +290,7 @@ function runAgent(opts) {
 // ---------------------------------------------------------------------------
 // Prompt assembly
 
-function buildPrompt({ item, thread, engine, cfg }) {
+function buildPrompt({ item, thread, engine, cfg, secretsDir }) {
   const parts = [];
   parts.push(
     'You are answering a message sent from a phone through Halyard, a local bridge to this machine.',
@@ -300,6 +300,11 @@ function buildPrompt({ item, thread, engine, cfg }) {
     cfg.relay && cfg.relay.enabled && engine.supportsRelayHook
       ? 'Mutating git commands, recursive deletes and outbound network calls are relayed to the phone for an approve/deny tap before they run. Use them normally; expect one pause.'
       : 'There is no approve/deny relay on this engine. Be conservative with anything destructive or outbound.',
+    // Only the directory, never a list of names or values: the model is told
+    // where to look, and looks only when a message needs a credential.
+    ...(secretsDir ? [
+      `Secrets the phone saved outside the chat are files in ${secretsDir}. Use one by path and never print, echo or quote its contents. To hand a value to the phone, write it to ${path.join(secretsDir, 'outbox')} and tell the phone to open /secrets - it is deleted once collected. Never ask the phone to paste a credential into a message.`,
+    ] : []),
     '',
     'Reply concisely - the answer is read on a phone screen. Prefer doing the work and reporting what you did over asking whether you should. If a message is genuinely ambiguous between two real interpretations - not merely underspecified - check the message log and any carried context first; if it is still ambiguous, run `halyard ask "<question>" --options "a|b"` (give the tool call a long timeout) and continue this same turn with the answer, rather than guessing or ending the turn with a question of your own.',
   );
@@ -404,7 +409,7 @@ async function processOne(ctx, item) {
   });
 
   const result = newResult();
-  const prompt = buildPrompt({ item, thread, engine, cfg });
+  const prompt = buildPrompt({ item, thread, engine, cfg, secretsDir: paths.secrets });
 
   // Resolved once per run, not once per turn: a resume is the same binary, and
   // re-running the filesystem probes on every retry would only add ways for a
@@ -426,6 +431,7 @@ async function processOne(ctx, item) {
     }
     const args = buildArgs(engine.args, {
       workspace: cfg.workspace,
+      secrets: paths.secrets,
       permissionMode: cfg.permissionMode,
       model: (engine.modelMap && engine.modelMap[item.model]) || item.model || '',
       session: sessionId || '',

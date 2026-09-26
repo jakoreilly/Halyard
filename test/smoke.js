@@ -487,6 +487,26 @@ check('index.html: the inline script parses', () => {
   assert.ok(/function flushOutbox\(/.test(src), 'the outbox must be flushed somewhere');
 });
 
+check('secrets.html: the inline script parses, and never touches the token', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'secrets.html'), 'utf8');
+  const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  assert.strictEqual(scripts.length, 1);
+  new (require('vm').Script)(scripts[0], { filename: 'secrets.html' });
+  // It rides the HttpOnly cookie; a page that read or forwarded the token would
+  // put it back in reach of script on the one page that handles credentials.
+  assert.ok(!/token/i.test(scripts[0].replace(/\/\/.*$/gm, '')), 'the secrets page script must not handle the token');
+});
+
+check('the agent is told where secrets live, and given the directory', () => {
+  const { buildPrompt, buildArgs } = require('../src/watcher');
+  const cfg = configmod.load({ file: null, env: {}, cli: { workspace: '/w' } });
+  const prompt = buildPrompt({ item: { message: 'hi' }, thread: { name: 'main' }, engine: cfg.engines.claude, cfg, secretsDir: '/data/secrets' });
+  assert.ok(prompt.includes('/data/secrets'), 'the prompt names the directory');
+  assert.ok(/never print/i.test(prompt));
+  const args = buildArgs(cfg.engines.claude.args, { workspace: '/w', secrets: '/data/secrets', permissionMode: 'default' });
+  assert.ok(args.join(' ').includes('--add-dir /data/secrets'), 'claude gets the secrets directory in scope');
+});
+
 // ---------------------------------------------------------------------------
 // The live server
 
@@ -541,6 +561,52 @@ async function main() {
     assert.strictEqual((await fetch(`${base}/sw.js`)).status, 200);
     // ...and manifest.json is NOT, which is exactly why it cannot be precached.
     assert.strictEqual((await fetch(`${base}/manifest.json`)).status, 401);
+  }));
+
+  await checkAsync('secrets: saved to a private file, never echoed, logged or persisted in state', () => withServer(async ({ call, base, paths, dir }) => {
+    const value = 'sk-live-' + 'Q'.repeat(24) + '"quoted"';
+    assert.strictEqual((await fetch(`${base}/secrets`)).status, 401, 'the page is behind the token like everything else');
+
+    const saved = await call('POST', '/api/secrets', { name: 'api-key', value });
+    assert.strictEqual(saved.status, 200);
+    assert.ok(!JSON.stringify(saved.body).includes(value), 'the response must not echo the value');
+    const file = path.join(paths.secrets, 'api-key');
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), value);
+    if (process.platform !== 'win32') assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+
+    assert.strictEqual((await call('POST', '/api/secrets', { name: 'api-key', value: 'x' })).status, 409, 'no silent overwrite');
+    assert.strictEqual((await call('POST', '/api/secrets', { name: 'api-key', value: 'x', overwrite: true })).status, 200);
+    for (const bad of ['../escape', '.hidden', 'a/b', '', 'x'.repeat(65)]) {
+      assert.strictEqual((await call('POST', '/api/secrets', { name: bad, value: 'v' })).status, 400, `name ${JSON.stringify(bad)}`);
+    }
+    assert.ok(!fs.existsSync(path.join(paths.root, 'escape')));
+
+    const list = await call('GET', '/api/secrets');
+    assert.deepStrictEqual(list.body.stored.map((f) => f.name), ['api-key']);
+    assert.ok(!JSON.stringify(list.body).includes('QQQQQQQQ'), 'the listing carries names, never values');
+
+    assert.strictEqual((await call('DELETE', '/api/secrets?name=api-key')).status, 200);
+    assert.ok(!fs.existsSync(file));
+
+    await call('POST', '/api/secrets', { name: 'again', value });
+    for (const f of [paths.state, paths.log, path.join(dir, 'test.log')]) {
+      if (fs.existsSync(f)) assert.ok(!fs.readFileSync(f, 'utf8').includes('QQQQQQQQ'), `${path.basename(f)} must never hold a value`);
+    }
+  }));
+
+  await checkAsync('secrets outbox: listed, handed over once, then gone', () => withServer(async ({ call, base, token, paths }) => {
+    fs.writeFileSync(path.join(paths.secretsOutbox, 'for-phone'), 'hand-back');
+    assert.deepStrictEqual((await call('GET', '/api/secrets')).body.outbox.map((f) => f.name), ['for-phone']);
+    const got = await fetch(`${base}/api/secrets/outbox/for-phone?token=${token}`);
+    assert.strictEqual(got.status, 200);
+    assert.strictEqual(got.headers.get('cache-control'), 'no-store');
+    assert.strictEqual(await got.text(), 'hand-back');
+    assert.ok(!fs.existsSync(path.join(paths.secretsOutbox, 'for-phone')), 'collected means deleted');
+    assert.strictEqual((await fetch(`${base}/api/secrets/outbox/for-phone?token=${token}`)).status, 404);
+    assert.strictEqual((await fetch(`${base}/api/secrets/outbox/..%2Fapi-key?token=${token}`)).status, 400);
+    const page = await fetch(`${base}/secrets?token=${token}`);
+    assert.strictEqual(page.status, 200);
+    assert.strictEqual(page.headers.get('cache-control'), 'no-store');
   }));
 
   await checkAsync('queue: push, peek, pop, and the pop is destructive', () => withServer(async ({ call }) => {
