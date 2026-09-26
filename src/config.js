@@ -41,6 +41,7 @@ const BUILTIN_ENGINES = {
       '--verbose',
       '--permission-mode', '{{permissionMode}}',
       '--add-dir', '{{workspace}}',
+      '--add-dir', '{{secrets}}',
       '--model', '{{model}}',
       '--resume', '{{session}}',
     ],
@@ -62,6 +63,7 @@ const BUILTIN_ENGINES = {
     args: [
       '--allow-all-tools',
       '--add-dir', '{{workspace}}',
+      '--add-dir', '{{secrets}}',
       '--output-format', 'json',
       '--model', '{{model}}',
       '--resume', '{{session}}',

@@ -54,6 +54,10 @@ function layout(dataDir) {
     threads: d('threads'),
     artifacts: d('artifacts'),
     uploads: d('uploads'),
+    // Values the phone hands over outside the chat, and the outbox it collects
+    // them from. Its own 0700 directory - see the secrets routes in server.js.
+    secrets: d('secrets'),
+    secretsOutbox: d('secrets', 'outbox'),
   };
 }
 
@@ -63,6 +67,12 @@ function layout(dataDir) {
 function ensure(paths) {
   for (const key of ['root', 'lockDir', 'threads', 'artifacts', 'uploads']) {
     fs.mkdirSync(paths[key], { recursive: true });
+  }
+  // mode only applies on creation, and is ignored on Windows - where a folder in
+  // the user's profile is already private to that user.
+  if (paths.secrets) {
+    fs.mkdirSync(paths.secretsOutbox, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(paths.secrets, 0o700); fs.chmodSync(paths.secretsOutbox, 0o700); } catch (e) { /* best effort */ }
   }
   return paths;
 }

@@ -105,6 +105,7 @@ screen — it is a PWA, so it gets an icon and behaves like an app.
 | **Search everything** | Every reply is archived to disk permanently and searchable, not just the last thirty. |
 | **See what it cost** | Per-run cost and duration, rolled up by day, thread and model. |
 | **Get artifacts back** | The agent writes a report to `artifacts/`; you get a tappable link. |
+| **Hand over a secret** | A token or password goes from the Secrets page straight to a private file the agent reads by path — never through the chat, the logs or the model's context. It works the other way too: the agent drops a key in an outbox and you collect it once. |
 | **Retry a lost message** | If a run dies, the message it ate comes back with one tap. |
 | **Read it aloud** | On-device speech, for when you're walking. |
 
@@ -187,6 +188,15 @@ missed one costs the whole thing.
 **Known gap, stated plainly:** the relay is a pre-tool hook, and not every agent CLI has
 one. `halyard doctor` and the phone's engine picker both label an engine that cannot be
 supervised. Do not read "the relay covers this" as true of every engine.
+
+**macOS: a background service can hang on a privacy prompt.** Run from a launchd agent, the
+agent inherits your GUI session, so its first touch of Documents, Desktop, Downloads or a
+removable volume puts a consent dialog on the Mac's *screen* — and the run waits for a click
+that never comes on a headless machine. Over SSH the same command works, which makes it
+look like anything but a permissions problem. Answer the dialogs once at the Mac (or grant
+Full Disk Access to the `node` binary the service runs), or keep the workspace out of those
+folders. `/usr/bin/log show --predicate 'process == "tccd"' | grep AUTHREQ_PROMPTING` shows a
+pending prompt. `runTimeoutMs` bounds the damage; it does not remove the cause.
 
 Full detail, including the threat model and what Halyard explicitly does **not** protect
 against: **[SECURITY.md](SECURITY.md)**.

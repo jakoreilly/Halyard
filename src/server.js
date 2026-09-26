@@ -814,6 +814,100 @@ function createServer(ctx) {
     return out;
   }
 
+  // --- secrets ------------------------------------------------------------
+  //
+  // A credential typed into a message is kept in the queue, state.json,
+  // replies.jsonl, the agent's transcript and the model's context. One POSTed
+  // here goes to <data>/secrets/<name> (0600) and nowhere else: never logged,
+  // never bumped over the change stream, never echoed back. The agent is told
+  // the directory and uses the file by path. The reverse direction is
+  // secrets/outbox/: the agent copies a file there, the page lists it, and the
+  // first fetch hands it over and deletes it. See SECURITY.md, "Secrets".
+
+  const SECRET_MAX_BYTES = 64 * 1024;
+
+  // An allow-list, because the string becomes a filename: no separators, no
+  // leading dot (so neither ".." nor a hidden file).
+  function secretName(name) {
+    return typeof name === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name) ? name : null;
+  }
+
+  function listSecrets(dir) {
+    let names;
+    try { names = fs.readdirSync(dir); } catch (e) { return []; }
+    const out = [];
+    for (const name of names) {
+      if (!secretName(name)) continue;
+      try {
+        const st = fs.statSync(path.join(dir, name));
+        if (st.isFile()) out.push({ name, size: st.size, at: st.mtimeMs });
+      } catch (e) { /* gone or unreadable - skip just this one */ }
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  route('GET', '/api/secrets', async (req, res) => json(res, 200, {
+    stored: listSecrets(paths.secrets),
+    outbox: listSecrets(paths.secretsOutbox),
+  }));
+
+  route('POST', '/api/secrets', async (req, res) => {
+    // readJson's own errors never quote the body, which here is the secret.
+    const body = await readJson(req, SECRET_MAX_BYTES + 4096);
+    const name = secretName(body.name);
+    if (!name) return json(res, 400, { error: 'name must be 1-64 letters, digits, . _ - and not start with . _ -' });
+    if (typeof body.value !== 'string' || !body.value) return json(res, 400, { error: 'value is empty' });
+    if (Buffer.byteLength(body.value) > SECRET_MAX_BYTES) return json(res, 413, { error: 'too large' });
+    const dest = path.join(paths.secrets, name);
+    if (fs.existsSync(dest) && body.overwrite !== true) {
+      return json(res, 409, { error: `${name} already exists - tick "replace" to overwrite it` });
+    }
+    fs.mkdirSync(paths.secrets, { recursive: true, mode: 0o700 });
+    // Temp file + rename so a reader never sees half a value, and 0600 from the
+    // moment the file exists rather than chmod'd afterwards.
+    const tmp = path.join(paths.secrets, `.${name}.${process.pid}.tmp`);
+    fs.writeFileSync(tmp, body.value, { mode: 0o600 });
+    fs.renameSync(tmp, dest);
+    log.info(`secret saved: ${name} (${Buffer.byteLength(body.value)} bytes)`);
+    return json(res, 200, { ok: true, name, path: dest });
+  });
+
+  route('DELETE', '/api/secrets', async (req, res, url) => {
+    const name = secretName(url.searchParams.get('name'));
+    if (!name) return json(res, 400, { error: 'bad name' });
+    try {
+      if (!fs.statSync(path.join(paths.secrets, name)).isFile()) throw new Error('not a file');
+      fs.unlinkSync(path.join(paths.secrets, name));
+    } catch (e) { return json(res, 404, { error: 'not found' }); }
+    log.info(`secret deleted: ${name}`);
+    return json(res, 200, { ok: true });
+  });
+
+  // One-shot: read, delete, then send. If the connection drops after the
+  // delete the value is gone - the agent that put it there can put it there
+  // again, which beats a credential lingering on disk after it was collected.
+  function collectSecret(res, rawName) {
+    let name;
+    try { name = secretName(decodeURIComponent(rawName)); } catch (e) { name = null; }
+    if (!name) return json(res, 400, { error: 'bad name' });
+    const file = path.join(paths.secretsOutbox, name);
+    let buf;
+    try {
+      if (!fs.statSync(file).isFile()) throw new Error('not a file');
+      buf = fs.readFileSync(file);
+      fs.unlinkSync(file);
+    } catch (e) { return json(res, 404, { error: 'not found' }); }
+    log.info(`secret collected from outbox: ${name}`);
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-length': buf.length,
+      'content-disposition': `attachment; filename="${name}"`,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    });
+    return res.end(buf);
+  }
+
   route('GET', '/api/artifacts', async (req, res) => {
     const items = listArtifactFiles().sort((a, b) => b.at - a.at);
     return json(res, 200, { items });
@@ -1186,6 +1280,14 @@ function createServer(ctx) {
         }
         if (['.html', '.htm'].includes(path.extname(file).toLowerCase())) return sendArtifactHtml(res, file);
         return sendFile(res, file, { cache: 'no-store' });
+      }
+
+      // --- secrets page + one-shot outbox collection ---
+      if (p === '/secrets' && req.method === 'GET') {
+        return sendFile(res, path.join(PUBLIC_DIR, 'secrets.html'), { cache: 'no-store' });
+      }
+      if (p.startsWith('/api/secrets/outbox/') && req.method === 'GET') {
+        return collectSecret(res, p.slice('/api/secrets/outbox/'.length));
       }
 
       // --- uploads ---
