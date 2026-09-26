@@ -39,6 +39,7 @@ Substituted at spawn time:
 | `{{model}}` | the phone's selection, mapped through `modelMap` |
 | `{{session}}` | the thread's prior session id, for resuming |
 | `{{permissionMode}}` | the configured permission mode |
+| `{{secrets}}` | the data directory's `secrets/` folder, where values from the phone's Secrets page land (see SECURITY.md, "Secrets") |
 
 **An argument pair whose value resolves to empty is dropped whole.** That is what lets one
 template cover "no model selected" *and* "first message in a thread, so nothing to resume":

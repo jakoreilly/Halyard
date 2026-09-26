@@ -197,6 +197,8 @@ Everything is in your data directory:
 | `runs.jsonl` | per-run cost ledger | |
 | `threads/*.session` | agent session ids | |
 | `halyard.log` | request and run log | rotated at 8 MB |
+| `secrets/*` | values saved from the Secrets page | dir `0700`, files `0600` |
+| `secrets/outbox/*` | values the agent is handing to the phone | deleted on first collection |
 
 Not encrypted at rest. It is a directory in your user profile with the same protection as
 the rest of your files. `replies.jsonl` in particular accumulates everything the agent has
@@ -204,6 +206,31 @@ ever told you — including anything it quoted out of your code.
 
 Nothing is in the repository, so `git pull` cannot clobber it and `git clean -xdf` cannot
 delete it.
+
+---
+
+## Secrets
+
+A credential typed into a message is copied into the queue, `state.json`, `replies.jsonl`,
+the agent's own transcript and the model provider's context. The Secrets page (`/secrets`)
+exists so that never has to happen.
+
+- **Phone → agent.** A value POSTed to `/api/secrets` is written to `secrets/<name>`
+  (temp file + rename, `0600` from creation) and nowhere else. It is not logged — the log
+  line carries the name and byte count — not published on the change stream, not kept in
+  state and not echoed in the response. Names are an allow-list (`[A-Za-z0-9._-]`, no
+  leading dot) because they become filenames.
+- **What the agent learns.** The prompt names the *directory* and the rule: use by path,
+  never print. Built-in engines get it via `--add-dir {{secrets}}`. Listing names or values
+  in the prompt would defeat the point.
+- **Agent → phone.** A file the agent writes to `secrets/outbox/` is listed on the page;
+  the first fetch returns it `no-store` and deletes it. A dropped connection after that
+  delete loses the value — the agent can write it again, which beats a credential lingering
+  on disk after it was collected.
+
+What this does **not** do: stop an agent that has read a secret from printing it. That is
+the model's instructions and your permission rules, not something Halyard can enforce. The
+page protects the hand-over, not the use.
 
 ---
 
