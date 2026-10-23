@@ -20,12 +20,16 @@
 //      individually with its own catch.
 //   3. SW_VERSION and the page's REQUIRED_SW_VERSION are bumped together.
 
-const SW_VERSION = 2;
+const SW_VERSION = 3;
 const CACHE = `halyard-shell-v${SW_VERSION}`;
 
 // Token-free URLs only. /manifest.json bakes the token into start_url and is
 // therefore served 401 without one - it must never go back in this list.
 const SHELL_URLS = ['/icon.svg'];
+// Holds one "Share -> Halyard" hand-off between this worker and the page it
+// redirects to. Never touched by the activate cleanup below, or a worker update
+// in between would eat a share in flight.
+const SHARE_CACHE = 'halyard-share';
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -38,10 +42,43 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const names = await caches.keys();
-    await Promise.all(names.filter((n) => n !== CACHE).map((n) => caches.delete(n)));
+    await Promise.all(names.filter((n) => n !== CACHE && n !== SHARE_CACHE).map((n) => caches.delete(n)));
     await self.clients.claim();
   })());
 });
+
+// --- Share target ----------------------------------------------------------
+// The manifest's share_target posts what another app shared (title/text/url and
+// at most one file) to /share. A page cannot read a POST body after a redirect,
+// so the worker parks it in SHARE_CACHE and sends the page ?shared=1 to pick it
+// up into the compose box - nothing is queued until the phone presses Send.
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (url.pathname === '/share' && event.request.method === 'POST') event.respondWith(receiveShare(event.request, url));
+  // Anything else is not intercepted at all - true network passthrough.
+});
+
+async function receiveShare(request, url) {
+  const back = (st) => Response.redirect(`/?token=${encodeURIComponent(url.searchParams.get('token') || '')}&shared=${st}`, 303);
+  try {
+    const form = await request.formData();
+    const cache = await caches.open(SHARE_CACHE);
+    const str = (k) => { const v = form.get(k); return typeof v === 'string' ? v : ''; };
+    const meta = { title: str('title'), text: str('text'), url: str('url'), at: Date.now() };
+    const file = form.get('file');
+    if (file && typeof file !== 'string' && file.size > 0) {
+      meta.fileName = file.name || 'shared';
+      meta.fileType = file.type || '';
+      await cache.put('/__share/file', new Response(file));
+    } else {
+      await cache.delete('/__share/file');
+    }
+    await cache.put('/__share/meta', new Response(JSON.stringify(meta), { headers: { 'Content-Type': 'application/json' } }));
+    return back('1');
+  } catch (e) {
+    return back('failed');
+  }
+}
 
 // The page asks for this to detect a stale worker. An old worker has no handler
 // here and simply does not reply, which is why the page treats silence as

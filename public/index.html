@@ -251,6 +251,10 @@
   button.danger { color: var(--poor); border-color: var(--line); background: transparent; }
   button:disabled { opacity: .45; cursor: default; }
   button.sm { padding: 5px 9px; font-size: 12.5px; }
+  /* A link that has to look like a button (the artifact Save download). */
+  a.btn { display: inline-block; text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: var(--r-md); padding: 5px 9px; font-size: 12.5px; }
+  /* The live run's model, beside what it is running. */
+  .chip { padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--sub); background: var(--panel-2); white-space: nowrap; }
   @media (hover: hover) and (pointer: fine) {
     button:not(:disabled):hover { border-color: var(--hair); background: var(--panel-3); }
     button.primary:not(:disabled):hover { background: var(--ink-2); border-color: var(--ink-2); }
@@ -460,6 +464,7 @@
     <div class="card tone run">
       <div class="row">
         <div class="grow small mono" id="run-what"></div>
+        <span class="chip tiny mono hidden" id="run-model" title="Model this run is on"></span>
         <button class="danger sm" id="run-kill">Stop</button>
       </div>
       <div class="ticker" id="run-ticker"><i></i></div>
@@ -479,6 +484,21 @@
       <summary><span id="steps-count">0</span> steps</summary>
       <div class="mono small det-body" id="steps"></div>
     </details>
+  </section>
+
+  <!-- Relay approvals that timed out with nobody at the phone. The hook denied
+       them, so the push or merge they gated did not happen. -->
+  <section id="taps" class="hidden">
+    <h2><span id="taps-title">needs your tap</span><span class="sp grow"></span><button class="ghost sm" id="taps-dismiss-all">Dismiss all</button></h2>
+    <div class="card tone fail">
+      <div class="tiny muted">These waited for an approval nobody tapped in time, so they did not run. Run again asks you once more.</div>
+      <div id="taps-list"></div>
+    </div>
+  </section>
+
+  <section id="hold" class="hidden">
+    <h2>held by the usage guard</h2>
+    <div class="card tone run"><div class="small" id="hold-text"></div></div>
   </section>
 
   <section id="failed" class="hidden">
@@ -538,6 +558,11 @@
      WORK - things the agent produced, and things it will do later.
      ===================================================================== -->
 <main class="view hidden" id="view-work" role="tabpanel" aria-labelledby="tab-work" data-title="Work">
+
+  <section id="usage-box">
+    <h2>usage<span class="sp grow"></span><button class="ghost sm" id="usage-go">Check usage</button></h2>
+    <div class="stack hidden" id="usage"></div>
+  </section>
 
   <section id="spend-box">
     <h2>spend</h2>
@@ -903,6 +928,8 @@
 
     renderRunBox(h.activeRun);
     renderFailed(h.lastFailed);
+    renderMissedTaps(h.missedTaps || []);
+    renderHold(h.usageHold);
     syncWakeLock();
 
     // Transcript: fetch only the delta, and only when the counter moved.
@@ -930,7 +957,10 @@
     box.classList.remove('hidden');
     if (!pendingAsk) setBadge('now', 'run', 'live');
     var secs = Math.round((Date.now() - run.startedAt) / 1000);
-    $('run-what').textContent = run.thread + ' / ' + run.engine + (run.model ? ' / ' + run.model : '');
+    $('run-what').textContent = run.thread + ' / ' + run.engine;
+    var label = run.modelLabel || run.model || '';
+    $('run-model').textContent = label;
+    $('run-model').classList.toggle('hidden', !label);
     $('run-elapsed').textContent = secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
     $('run-activity').textContent = run.activity || 'starting';
     $('run-kill').disabled = !!run.killRequested;
@@ -964,6 +994,61 @@
         // looks like a rendering bug rather than a work in progress.
         $('run-draft').textContent = t.draft || '';
       }).catch(function () {});
+  }
+
+  // Built with textContent only: the command is whatever a run tried to
+  // execute, and must never be parsed as markup. Keyed on the id list so a
+  // health refresh does not rebuild the card under a finger mid-tap. null, not
+  // '': an empty list's key IS '', so a '' reset would skip the rebuild after
+  // the last Run again / Dismiss and leave the card up.
+  var missedTapsKey = null;
+  function renderMissedTaps(list) {
+    var key = list.map(function (m) { return m.id; }).join(',');
+    if (key === missedTapsKey) return;
+    missedTapsKey = key;
+    var box = $('taps-list');
+    box.innerHTML = '';
+    $('taps').classList.toggle('hidden', !list.length);
+    if (!list.length) return;
+    $('taps-title').textContent = 'needs your tap (' + list.length + ')';
+    list.forEach(function (m) {
+      var row = document.createElement('div');
+      row.style.cssText = 'margin-top:var(--s-3);padding-top:var(--s-3);border-top:1px solid var(--line)';
+      var meta = document.createElement('div');
+      meta.className = 'tiny muted';
+      var when = new Date(m.missedAt).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+      meta.textContent = m.cwd ? when + '  ' + m.cwd.replace(/^\/(?:Users|home)\/[^/]+|^[A-Za-z]:\\Users\\[^\\]+/, '~') : when;
+      var cmd = document.createElement('div');
+      cmd.className = 'cmd mono small';
+      cmd.textContent = m.command;
+      var btns = document.createElement('div');
+      btns.className = 'row';
+      var again = document.createElement('button');
+      again.className = 'primary sm'; again.textContent = 'Run again';
+      again.onclick = function () { missedTapAction('/api/missed/rerun', { id: m.id }, again, 'Queuing'); };
+      var drop = document.createElement('button');
+      drop.className = 'ghost sm'; drop.textContent = 'Dismiss';
+      drop.onclick = function () { missedTapAction('/api/missed/dismiss', { id: m.id }, drop, 'Dismissing'); };
+      btns.appendChild(again); btns.appendChild(drop);
+      row.appendChild(meta); row.appendChild(cmd); row.appendChild(btns);
+      box.appendChild(row);
+    });
+  }
+  function missedTapAction(endpoint, body, btn, busy) {
+    var label = btn.textContent;
+    btn.disabled = true; btn.textContent = busy;
+    post(endpoint, body).catch(function (e) {
+      // 404 is "already gone", which is what was wanted.
+      if (!/404/.test(e.message)) throw e;
+    }).then(function () { missedTapsKey = null; pollHealth(); })
+      .catch(function () { btn.disabled = false; btn.textContent = label + ' failed - tap to try again'; });
+  }
+
+  function renderHold(h) {
+    $('hold').classList.toggle('hidden', !h);
+    if (!h) return;
+    $('hold-text').textContent = (h.gauge || 'usage') + ' is at ' + h.percent + '%, so "' + h.message + '" is staying queued.' +
+      (h.resetsAt ? ' It resets at ' + new Date(h.resetsAt).toLocaleString() + '.' : '') + ' It starts by itself once usage drops.';
   }
 
   function renderFailed(f) {
@@ -1103,12 +1188,25 @@
       var pb = act('Pin', function (b) { pinToggle(n); b.textContent = isPinned(n.id) ? 'Pinned' : 'Pin'; el.classList.toggle('pinned', isPinned(n.id)); });
       pb.textContent = isPinned(n.id) ? 'Pinned' : 'Pin';
       act('Copy', function (b) {
-        navigator.clipboard.writeText(n.message);
-        b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1200);
+        copyText(shareableText(n.message)).then(function (ok) {
+          b.textContent = ok ? 'Copied' : 'Copy failed'; setTimeout(function () { b.textContent = 'Copy'; }, 1200);
+        });
       });
       // Native share exists on exactly the device this page is for, and is
-      // the only way to get a reply into another app one-handed.
-      if (navigator.share) act('Share', function () { navigator.share({ title: 'Halyard reply', text: n.message }).catch(function () {}); });
+      // the only way to get a reply into another app one-handed. A browser
+      // without one gets a copy, and the button says so.
+      act('Share', function (b) {
+        var text = shareableText(n.message);
+        if (navigator.share) {
+          navigator.share({ text: text }).catch(function (e) {
+            if (e && e.name !== 'AbortError') { b.textContent = 'Share failed'; setTimeout(function () { b.textContent = 'Share'; }, 1500); }
+          });
+          return;
+        }
+        copyText(text).then(function (ok) {
+          b.textContent = ok ? 'Copied instead' : 'Share failed'; setTimeout(function () { b.textContent = 'Share'; }, 1500);
+        });
+      });
       // Following up means continuing THIS thread, which is a different
       // thing from whatever thread the compose box was last left on.
       // thread() reads the SELECT before localStorage, so moving the stored
@@ -1146,6 +1244,45 @@
     }
     el.appendChild(acts);
     return el;
+  }
+
+  // A reply as plain text to hand to another app. The run footer is Halyard's
+  // own bookkeeping, and links into this bridge (/artifacts, /secrets) carry
+  // the access token - pasted into a group chat they would hand the whole
+  // bridge to whoever reads it - so those keep only their label. Web links
+  // stay, as "label (url)", because the person receiving it needs somewhere to
+  // click. Exposed on window.halyardShareable so the test suite can pin it.
+  function shareableText(md) {
+    return String(md)
+      .replace(/\n-{3,}\s*\n(?:Edited|Git:|\$|\d+s|\d+ turns|[\d.]+k context|Model:|Context|Transcript|Auto-shrink)[\s\S]*$/, '')
+      .replace(/\[([^\]]+)\]\((\/[^)]*)\)/g, '$1')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, function (m, label, url) { return label === url ? url : label + ' (' + url + ')'; })
+      .replace(/(?:https?:\/\/\S*)?\/(?:artifacts|secrets)\S*/g, '')
+      .replace(/[?&]token=[^\s&)]*/g, '')
+      .replace(/\*\*([^*]+)\*\*/g, '*$1*')
+      .replace(/`{1,3}([^`]*)`{1,3}/g, '$1')
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+  window.halyardShareable = shareableText;
+
+  // navigator.clipboard needs a secure context, which a tunnel's HTTPS gives;
+  // the textarea route is for a browser that still refuses.
+  function copyText(text) {
+    var fallback = function () {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+      return ok;
+    };
+    if (!navigator.clipboard) return Promise.resolve(fallback());
+    return navigator.clipboard.writeText(text).then(function () { return true; }, fallback);
   }
 
   function renderReplies(items) {
@@ -1293,8 +1430,12 @@
   function pollArtifacts() {
     return api('/api/artifacts').then(function (r) {
       $('artifacts').innerHTML = r.items.length ? r.items.map(function (a) {
-        return '<li><a class="grow small" href="/artifacts/' + encodeURIComponent(a.name) + '?token=' + encodeURIComponent(TOKEN) + '" target="_blank" rel="noopener">' + esc(a.name) + '</a>' +
-          '<span class="tiny muted mono">' + Math.max(1, Math.round(a.size / 1024)) + ' kB</span></li>';
+        var href = '/artifacts/' + encodeURIComponent(a.name) + '?token=' + encodeURIComponent(TOKEN);
+        // Save is the untouched file as a download, so a copy kept on the
+        // phone works offline.
+        return '<li><a class="grow small" href="' + href + '" target="_blank" rel="noopener">' + esc(a.name) + '</a>' +
+          '<span class="tiny muted mono">' + Math.max(1, Math.round(a.size / 1024)) + ' kB</span>' +
+          '<a class="ghost sm btn" href="' + href + '&download=1" download="' + esc(a.name) + '">Save</a></li>';
       }).join('') : '<li class="empty">None.</li>';
     }).catch(function () {});
   }
@@ -1593,7 +1734,7 @@
     var pref = LS.get('model', '');
     $('model').innerHTML = '<option value="">Default model</option>' +
       ((e && e.models) || []).map(function (m) {
-        return '<option value="' + esc(m) + '"' + (m === pref ? ' selected' : '') + '>' + esc(m) + '</option>';
+        return '<option value="' + esc(m) + '"' + (m === pref ? ' selected' : '') + '>' + (m === 'auto' ? 'Auto (light first, hands up)' : esc(m)) + '</option>';
       }).join('');
   }
 
@@ -1776,7 +1917,7 @@
   // an old worker has no message handler and does not reply at all, so "no
   // answer" and "old worker" look identical from here - a non-answer is never
   // read as "no worker registered".
-  var REQUIRED_SW_VERSION = 2;
+  var REQUIRED_SW_VERSION = 3;
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').then(function (reg) {
       setTimeout(function () {
@@ -1799,6 +1940,73 @@
     syncWakeLock();
   });
 
+  // ---------------------------------------------------------------------
+  // Usage. On demand, then kept live every 3 minutes while the panel is open
+  // and the page is visible - so the number on screen is never a leftover from
+  // the last tap. Not faster: the endpoint behind it has answered 429 to
+  // heavier polling. A failed quiet refresh leaves the last good numbers up.
+  function checkUsage(quiet) {
+    var box = $('usage');
+    if (!quiet) { $('usage-go').disabled = true; $('usage-go').textContent = 'Checking'; box.classList.remove('hidden'); box.innerHTML = '<div class="empty">Checking.</div>'; }
+    return api('/api/usage' + (quiet ? '' : '?fresh=1')).then(function (d) {
+      if (d.error) {
+        if (quiet) return;
+        box.innerHTML = '<div class="note small warn">' + esc(d.hint || d.error) + '</div>';
+        return;
+      }
+      if (!d.gauges || !d.gauges.length) { box.innerHTML = '<div class="empty">No usage data returned.</div>'; return; }
+      var guard = health && health.usageGuard && health.usageGuard.maxPercent;
+      box.innerHTML = d.gauges.map(function (g, i) {
+        var pct = Math.max(0, Math.min(100, Math.round(g.percent)));
+        var reset = g.resetsAt ? 'resets ' + new Date(g.resetsAt).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+        return '<div class="tiny" style="margin-bottom:6px"><div class="row" style="justify-content:space-between;gap:var(--s-2);flex-wrap:nowrap">' +
+          '<span class="muted mono">' + esc(String(g.name).replace(/_/g, ' ')) + '</span><span class="mono">' + pct + '%</span></div>' +
+          '<div class="bar" style="margin-top:3px"><i style="width:' + pct + '%;background:' + (guard && pct >= guard ? 'var(--poor)' : rampToken(i, d.gauges.length)) + '"></i></div>' +
+          (reset ? '<div class="tiny muted">' + esc(reset) + '</div>' : '') + '</div>';
+      }).join('') + '<div class="tiny muted">Checked ' + esc(new Date(d.checkedAt || Date.now()).toLocaleTimeString()) +
+        ' - refreshes every 3 min while open' + (guard ? ' - guard holds messages at ' + guard + '%' : '') + '</div>';
+    }).catch(function () { if (!quiet) box.innerHTML = '<div class="empty">Failed to check usage.</div>'; })
+      .then(function () { if (!quiet) { $('usage-go').disabled = false; $('usage-go').textContent = 'Check usage'; } });
+  }
+  $('usage-go').onclick = function () { checkUsage(false); };
+  setInterval(function () {
+    if (document.hidden || $('usage-go').disabled || $('usage').classList.contains('hidden')) return;
+    if ($('view-work').classList.contains('hidden')) return;
+    checkUsage(true);
+  }, 180000);
+
+  // ---------------------------------------------------------------------
+  // Share target. sw.js parked what another app shared; it becomes a DRAFT
+  // (plus an uploaded attachment), never a sent message.
+  function pickUpShare() {
+    var st = new URLSearchParams(location.search).get('shared');
+    if (!st) return;
+    history.replaceState(null, '', location.pathname + '?token=' + encodeURIComponent(TOKEN));
+    setView('now');
+    if (st === 'missed') { alert('That share arrived before Halyard was ready to catch it - please share it again.'); return; }
+    if (st === 'failed' || !window.caches) { alert('The share could not be read - please share it again.'); return; }
+    caches.open('halyard-share').then(function (cache) {
+      return cache.match('/__share/meta').then(function (r) { return r ? r.json() : null; }).then(function (meta) {
+        if (!meta) return;
+        var parts = [meta.title, meta.text, meta.url].filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+        var add = function (extra) {
+          var cur = $('msg').value.trim();
+          $('msg').value = (cur ? cur + '\n\n' : '') + parts.concat(extra ? [extra] : []).join('\n');
+          saveDraft(); measureBar(); $('msg').focus();
+        };
+        var done = function () { cache.delete('/__share/meta'); cache.delete('/__share/file'); };
+        if (!meta.fileName) { add(''); done(); return; }
+        return cache.match('/__share/file').then(function (fr) { return fr ? fr.blob() : null; }).then(function (blob) {
+          if (!blob) { add(''); done(); return; }
+          return fetch('/api/upload?token=' + encodeURIComponent(TOKEN) + '&name=' + encodeURIComponent(meta.fileName), { method: 'POST', body: blob })
+            .then(function (r) { return r.json(); })
+            .then(function (j) { add('Attached file: ' + j.path); done(); })
+            .catch(function () { add('(the shared file ' + meta.fileName + ' could not be uploaded)'); done(); });
+        });
+      });
+    }).catch(function () {});
+  }
+
   // Kick off
   $('thread').innerHTML = '<option>' + esc(LS.get('thread', 'main')) + '</option>';
   $('msg').value = LS.get('draft', '');
@@ -1808,6 +2016,7 @@
   renderOutbox();
   pollHealth().then(fillEngines);
   pollState(); pollNotifications(); pollContext(); pollArtifacts(); pollScheduled();
+  pickUpShare();
   renderPinned();
   setupPush();
   retime();

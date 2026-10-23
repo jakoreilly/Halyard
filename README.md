@@ -179,8 +179,10 @@ permission mode, a workspace that contains your home directory, an engine with n
 each is a legitimate choice for somebody and each prints a warning that says exactly what
 it exposes. It never refuses to run in a configuration its author disagrees with.
 
-**The relay is a real backstop, not a checkbox.** It matches mutating git, recursive
-deletes and outbound data — including `sh -c "git push --force"`, `gh pr create`, and a
+**The relay is a real backstop, not a checkbox.** It matches git that publishes or discards
+work (undoable local git like `commit` runs unasked), recursive deletes, outbound data, a
+command that reads a secret and talks to the network, and — once a run has read the web, an
+MCP tool or an upload — any request off the machine. That includes `sh -c "git push --force"`, `gh pr create`, and a
 `curl` with the flag written before the URL, all of which are the obvious ways to walk past
 a naive matcher. It deliberately matches *eagerly*: an unnecessary tap costs a second, a
 missed one costs the whole thing.

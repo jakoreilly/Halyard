@@ -64,6 +64,44 @@ const POLL_MS = 3000;
 // `/`, so an absolute `/usr/bin/git push` still matches.
 const MUTATING_GIT = /(?<!\w)git\s+(?:(?:-[cC]\s+\S+|--git-dir=\S+|--work-tree=\S+|--no-pager)\s+)*(add|commit|push|checkout|switch|branch|merge|rebase|reset|revert|tag|stash|restore|clean|cherry-pick|rm|mv)\b/;
 
+// MUTATING_GIT is the candidate list; RISKY_GIT decides which of those calls is
+// worth a phone tap. Waiting on the phone for every `git add` and `git commit`
+// made the human's response time the bottleneck on every run, so the local,
+// undoable verbs (add, commit, merge, rebase, revert, cherry-pick, tag, mv, a
+// plain or --soft/--mixed reset, switch, `checkout -b`, branch create/rename,
+// stash push/pop) run unasked: the reflog gets every one of them back. What still
+// relays is what publishes or destroys work the reflog cannot restore:
+//   push            - leaves the machine
+//   clean, restore  - discard untracked / uncommitted work
+//   reset --hard/--merge/--keep - discards uncommitted work
+//   checkout        - anything but -b/-B, because `git checkout <x>` is a branch
+//                     switch or a discard of <x>'s edits, and which one is not
+//                     decidable from the text. Use `git switch` for the safe form.
+//   switch -f/--discard-changes, branch -D/-f, stash drop/clear, rm -f
+// Each git call is judged on its own arguments, cut at the next shell separator,
+// so `git commit -m x && git push` still relays on the push. A separator inside a
+// quoted argument cuts early; accepted, as the relay is a backstop against a
+// careless run, not an adversarial one.
+const GIT_CALL = new RegExp(MUTATING_GIT.source + String.raw`([^;&|\n]*)`, 'g');
+const RISKY_GIT = {
+  push: () => true,
+  clean: () => true,
+  restore: () => true,
+  reset: (a) => /(?<!\S)--(?:hard|merge|keep)\b/.test(a),
+  checkout: (a) => !/^\s*-[bB]\s+\S/.test(a),
+  switch: (a) => /(?<!\S)(?:-[a-zA-Z]*f[a-zA-Z]*|--force|--discard-changes)\b/.test(a),
+  branch: (a) => /(?<!\S)(?:-[a-zA-Z]*[Df][a-zA-Z]*|--force)\b/.test(a),
+  stash: (a) => /^\s*(?:drop|clear)\b/.test(a),
+  rm: (a) => /(?<!\S)(?:-[a-zA-Z]*f[a-zA-Z]*|--force)\b/.test(a),
+};
+function isRiskyGit(command) {
+  for (const m of String(command).matchAll(GIT_CALL)) {
+    const check = RISKY_GIT[m[1]];
+    if (check && check(m[2] || '')) return true;
+  }
+  return false;
+}
+
 // Bash is not the only tool that runs a shell. The CLI Halyard launches
 // (the Claude Code CLI) also ships a PowerShell tool, and a
 // headless run reaching for that one instead sailed straight past this hook:
@@ -87,9 +125,11 @@ const RELAYED_TOOLS = new Set(['Bash', 'PowerShell']);
 // as MUTATING_GIT, applied one notch tighter because the false-positive rate here
 // would otherwise be much higher.
 const DESTRUCTIVE_FS = new RegExp([
-  // POSIX rm with -r/-R anywhere in a flag cluster (-rf, -fr, -Rf, -r) or --recursive
-  String.raw`(?<!\w)rm\s+(?:-{1,2}[\w-]+\s+)*-[a-zA-Z]*[rR]`,
-  String.raw`(?<!\w)rm\s+(?:-{1,2}[\w-]+\s+)*--recursive`,
+  // POSIX rm with -r/-R anywhere in a flag cluster (-rf, -fr, -Rf, -r) or --recursive.
+  // Not `git rm`: that refuses to drop uncommitted edits without -f, so RISKY_GIT
+  // judges it instead.
+  String.raw`(?<!\w)(?<!\bgit\s+)rm\s+(?:-{1,2}[\w-]+\s+)*-[a-zA-Z]*[rR]`,
+  String.raw`(?<!\w)(?<!\bgit\s+)rm\s+(?:-{1,2}[\w-]+\s+)*--recursive`,
   // cmd.exe tree deletes
   String.raw`(?<!\w)(?:rmdir|rd)\s+(?:[^\s]+\s+)*/[sS]`,
   String.raw`(?<!\w)del\s+(?:[^\s]+\s+)*/[sS]`,
@@ -152,13 +192,221 @@ function isLoopbackOnly(command) {
   return urls.every((u) => LOOPBACK_URL.test(u));
 }
 
+// ---- Prompt injection: the egress half ----------------------------------------
+//
+// An injection lives in what a run READS - a web page, an attachment, a tool result -
+// and only matters if it can make the run SEND something. So rather than trying to
+// spot hostile text (a classifier can't, reliably, and the text can address the
+// classifier too), the run is marked "tainted" the moment it reads untrusted content,
+// and from then on anything that talks to a host outside this machine, the LAN or the
+// tailnet relays. NETWORK_EGRESS above only sees requests that carry a body; data can
+// leave just as easily in a plain GET's URL, which was never relayed. Textual, like
+// everything else in this file: a backstop against a run that was talked into
+// something, not a sandbox - a URL assembled at runtime from pieces is not seen.
+
+// Hosts that are not "off this machine" for this purpose: loopback, private LAN
+// ranges, a Tailscale tailnet (100.64.0.0/10 and *.ts.net), mDNS *.local, and
+// single-label names (a LAN machine's bare hostname).
+function isLocalHost(host) {
+  const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h) return true;
+  if (h === 'localhost' || h === '::1' || h === '0.0.0.0') return true;
+  // IPv6 before the single-label rule, which would read [2606:4700::1111] as "2606".
+  // Local means link-local (fe80::/10) or unique-local (fc00::/7, which tailnets use).
+  if (h.includes(':')) return /^(?:fe[89ab][0-9a-f]|f[cd][0-9a-f]{2}):/.test(h);
+  if (!h.includes('.')) return true;
+  if (h.endsWith('.ts.net') || h.endsWith('.local')) return true;
+  const m = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)
+    || (a === 100 && b >= 64 && b <= 127);
+}
+
+// The whole authority, cut down to the host by authorityHost(): stopping the capture at
+// the first ':' read https://x:y@evil.com/ as the single-label (so "local") host "x".
+const URL_IN_TEXT = /\b(?:https?|ftp|wss?):\/\/([^\s/'"`?#)]+)/gi;
+function authorityHost(auth) {
+  const a = auth.slice(auth.lastIndexOf('@') + 1);
+  if (a.startsWith('[')) return a.slice(0, a.indexOf(']') + 1);
+  return a.replace(/:\d*$/, '');
+}
+// curl, wget and PowerShell's web cmdlets default to http, so `curl evil.com/x` names a
+// host with no scheme. A bare IPv4 or a dotted argument whose last label is alphabetic
+// counts, except the value of an output-file flag; another filename-shaped argument
+// costs a tap.
+const WEB_TOOL = /(?<![\w-])(?:curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b([^;&|\n]*)/gi;
+const OUTPUT_FLAG = /^(?:-o|-O|--output|--output-document|-OutFile)$/i;
+const BARE_HOST = /^(?:[^\s@\/]+@)?((?:\d{1,3}\.){3}\d{1,3}|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})(?::\d+)?(?:[\/?#]\S*)?$/i;
+function bareWebHosts(text) {
+  const hosts = [];
+  for (const m of String(text || '').matchAll(WEB_TOOL)) {
+    // A command substitution's insides are another command, not this tool's arguments:
+    // `$(cat token.txt)` must not make token.txt a host.
+    const args = m[1].replace(/\$\([^)]*\)|`[^`]*`/g, ' ').trim().split(/\s+/).map((t) => t.replace(/^['"(]+|['")]+$/g, ''));
+    args.forEach((arg, i) => {
+      if (!arg || arg.startsWith('-') || arg.includes('://') || (i > 0 && OUTPUT_FLAG.test(args[i - 1]))) return;
+      const h = arg.match(BARE_HOST);
+      if (h) hosts.push(h[1]);
+    });
+  }
+  return hosts;
+}
+// Raw socket and remote-shell tools name their host as an argument, not a URL.
+const SOCKET_TOOL = /(?<!\w)(?:nc|ncat|netcat|telnet|socat|ssh|scp|sftp|rsync)\b[^;&|\n]*?(?:@|\s)((?:\d{1,3}\.){3}\d{1,3}|[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?=[\s:/]|$)/gi;
+
+// Every non-local host a shell command line points at.
+function outboundHosts(text) {
+  const hosts = [];
+  for (const m of String(text || '').matchAll(URL_IN_TEXT)) {
+    const h = authorityHost(m[1]);
+    if (!isLocalHost(h)) hosts.push(h.toLowerCase());
+  }
+  for (const h of bareWebHosts(text)) if (!isLocalHost(h)) hosts.push(h.toLowerCase());
+  for (const m of String(text || '').matchAll(SOCKET_TOOL)) if (!isLocalHost(m[1])) hosts.push(m[1].toLowerCase());
+  return hosts;
+}
+
+// What counts as a secret on a command line: a `.secrets` or Halyard `secrets`
+// directory, this install's bearer token, or the secrets directory Halyard itself
+// keeps (whatever the data dir is). Matching eagerly is fine here - on its own this
+// decides nothing; it only relays alongside a non-local host.
+function secretsRef(env = process.env) {
+  const parts = [
+    String.raw`(?:^|[\s'"\x60=(\/\\~$}])\.?secrets(?:[\/\\]|\b)`,
+    String.raw`(?<![\w-])token\.txt\b`,
+  ];
+  const own = path.join(dataDir(), 'secrets');
+  parts.push(own.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (env.HALYARD_SECRETS_PATTERN) parts.push(env.HALYARD_SECRETS_PATTERN);
+  try { return new RegExp(parts.join('|'), 'i'); } catch (e) { return new RegExp(parts.slice(0, 3).join('|'), 'i'); }
+}
+const SECRETS_REF = secretsRef();
+
+// Taint or no taint: one command that both reads a secret and talks to the outside
+// world is the shape of exfiltration whatever led up to it.
+function isSecretEgress(command) {
+  return SECRETS_REF.test(command) && outboundHosts(command).length > 0;
+}
+
+// A URL that looks like it is carrying data rather than naming a page: a long query
+// string, or any long opaque token. Article slugs are hyphenated words, so they pass.
+function isDataBearingUrl(url) {
+  let u;
+  try { u = new URL(String(url)); } catch (e) { return false; }
+  if (u.search.length > 80) return true;
+  return /[A-Za-z0-9+/=_%]{40,}/.test(u.pathname + u.search);
+}
+
+// What counts as reading untrusted content. Phone uploads land in <data>/uploads.
+const FETCH_TOOLS = new Set(['WebFetch']);
+const TAINT_TOOLS = new Set(['WebFetch', 'WebSearch']);
+const UNTRUSTED_PATH = /[\/\\](?:uploads|Downloads)[\/\\]/i;
+function taintSource(toolName, toolInput) {
+  const input = toolInput || {};
+  if (TAINT_TOOLS.has(toolName)) return toolName;
+  if (/^mcp__/.test(String(toolName))) return toolName;
+  if (toolName === 'Read' && UNTRUSTED_PATH.test(String(input.file_path || ''))) return `Read ${input.file_path}`;
+  if (RELAYED_TOOLS.has(toolName)) {
+    const hosts = outboundHosts(input.command);
+    if (hosts.length) return `${toolName} fetch from ${hosts[0]}`;
+    if (UNTRUSTED_PATH.test(String(input.command || ''))) return `${toolName} on an attachment or download`;
+  }
+  return null;
+}
+function readsSecret(toolName, toolInput) {
+  const input = toolInput || {};
+  if (toolName === 'Read') return SECRETS_REF.test(String(input.file_path || ''));
+  if (RELAYED_TOOLS.has(toolName)) return SECRETS_REF.test(String(input.command || ''));
+  return false;
+}
+
+// Per-session state in the temp dir: one small JSON file per run's session id.
+const TAINT_DIR = process.env.HALYARD_TAINT_DIR || path.join(os.tmpdir(), 'halyard-taint');
+function taintFile(sessionId) {
+  const id = String(sessionId || '').replace(/[^A-Za-z0-9-]/g, '');
+  return id ? path.join(TAINT_DIR, `${id}.json`) : null;
+}
+function readTaint(sessionId) {
+  const f = taintFile(sessionId);
+  if (!f) return {};
+  try { return JSON.parse(fs.readFileSync(f, 'utf8')) || {}; } catch (e) { return {}; }
+}
+function updateTaint(sessionId, toolName, toolInput) {
+  const f = taintFile(sessionId);
+  if (!f) return {};
+  const state = readTaint(sessionId);
+  const source = taintSource(toolName, toolInput);
+  const secret = readsSecret(toolName, toolInput);
+  if ((!source || state.tainted) && (!secret || state.secretRead)) {
+    // Keep a tainted session's file fresh while it is in use: the sweep below counts from
+    // mtime, and a thread resumed days later still has the hostile text in its transcript.
+    if (state.tainted) { try { const t = new Date(); fs.utimesSync(f, t, t); } catch (e) { /* best effort */ } }
+    return state;
+  }
+  if (source && !state.tainted) { state.tainted = true; state.source = source; }
+  if (secret) state.secretRead = true;
+  try {
+    fs.mkdirSync(TAINT_DIR, { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(state));
+    // Opportunistic sweep: a session's file is worthless after a day or two.
+    const cutoff = Date.now() - 2 * 86400 * 1000;
+    for (const name of fs.readdirSync(TAINT_DIR)) {
+      const p = path.join(TAINT_DIR, name);
+      try { if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p); } catch (e) { /* raced */ }
+    }
+  } catch (e) { /* best effort: an unwritable temp dir must not fail the tool call */ }
+  return state;
+}
+
+function hostOf(url) {
+  try { return new URL(url).hostname; } catch (e) { return ''; }
+}
+
+// The taint-aware rules, consulted after the plain ones. [ctx] is the session's state
+// as it stood BEFORE this call, so the call that first reads untrusted content is not
+// itself relayed - only what follows it.
+const TAINT_RULES = [
+  {
+    name: 'secret-egress', label: 'command that reads a secret and talks to the network',
+    test: (tool, text) => RELAYED_TOOLS.has(tool) && isSecretEgress(text),
+  },
+  {
+    name: 'tainted-egress', label: (ctx) => `network request after this run read untrusted content (${ctx.source || 'web'})`,
+    test: (tool, text, ctx) => RELAYED_TOOLS.has(tool) && !!ctx.tainted && outboundHosts(text).length > 0,
+  },
+  // A web fetch is how a research run reads, so it relays only when it could be
+  // carrying data out: a data-shaped URL after taint, or any fetch once the run has
+  // both read untrusted content and touched a secret.
+  {
+    name: 'tainted-egress', label: (ctx) => (ctx.secretRead
+      ? 'web fetch after this run read both untrusted content and a secret'
+      : `data-shaped web fetch after this run read untrusted content (${ctx.source || 'web'})`),
+    test: (tool, text, ctx) => FETCH_TOOLS.has(tool) && !!ctx.tainted && !isLocalHost(hostOf(text))
+      && (!!ctx.secretRead || isDataBearingUrl(text)),
+  },
+];
+
+function matchTaintRule(toolName, command, ctx = {}, env = process.env) {
+  const text = String(command || '').trim();
+  if (!text) return null;
+  const live = new Set(enabledRules(env).map((r) => r.name));
+  const hit = TAINT_RULES.find((r) => live.has(r.name) && r.test(toolName, text, ctx));
+  if (!hit) return null;
+  return { name: hit.name, label: typeof hit.label === 'function' ? hit.label(ctx) : hit.label };
+}
+
 // Ordered because the first match names the question the phone is asked. Each rule
 // carries the noun that goes into that question - "a git command" and "a recursive
 // delete" want different amounts of thought from whoever is holding the phone.
+// The two taint rules are listed here (with no test of their own) so that
+// HALYARD_RELAY_RULES can name them like any other family.
 const RELAY_RULES = [
-  { name: 'git', label: 'git command', test: (cmd) => MUTATING_GIT.test(cmd) },
+  { name: 'git', label: 'git command', test: (cmd) => isRiskyGit(cmd) },
   { name: 'destructive-fs', label: 'recursive delete', test: (cmd) => DESTRUCTIVE_FS.test(cmd) },
   { name: 'network-egress', label: 'command that sends data off this machine', test: (cmd) => NETWORK_EGRESS.test(cmd) && !isLoopbackOnly(cmd) },
+  { name: 'secret-egress', label: 'command that reads a secret and talks to the network', test: () => false },
+  { name: 'tainted-egress', label: 'network request after this run read untrusted content', test: () => false },
 ];
 
 // Returns the matched rule (or null), so the caller can say WHICH kind of thing it
@@ -178,18 +426,96 @@ function enabledRules(env = process.env) {
   return RELAY_RULES.filter((r) => want.has(r.name));
 }
 
-function matchRelayRule(toolName, command, env = process.env) {
-  if (!RELAYED_TOOLS.has(toolName)) return null;
+function matchRelayRule(toolName, command, ctx = {}, env = process.env) {
   const cmd = String(command || '').trim();
   if (!cmd) return null;
-  return enabledRules(env).find((r) => r.test(cmd)) || null;
+  if (RELAYED_TOOLS.has(toolName)) {
+    const rule = enabledRules(env).find((r) => r.test(cmd));
+    if (rule) return rule;
+  }
+  return matchTaintRule(toolName, cmd, ctx, env);
 }
 
 // Split out from main() so test/smoke.js can exercise the tool gate and the
 // command match together, rather than only the regex in isolation - the bug
 // above was in the gate, not the regex, and a regex-only test could not see it.
-function shouldRelay(toolName, command) {
-  return matchRelayRule(toolName, command) !== null;
+function shouldRelay(toolName, command, ctx = {}) {
+  return matchRelayRule(toolName, command, ctx) !== null;
+}
+
+// ---- Private-repo merges, optionally without a tap -----------------------------
+//
+// Opt-in (relay.privateMergeWithoutTap, which the watcher passes as
+// HALYARD_RELAY_PRIVATE_MERGE=1): for someone whose own rule is "merging into a
+// private repo needs no sign-off", the tap on `gh pr merge` there is pure cost.
+// Public repos always relay: a merge there is publication.
+//
+// Narrow on purpose, failing towards the relay at every step:
+//  - the whole command must be one `gh pr merge` (optionally after one `cd <dir> &&`)
+//    with no shell metacharacters, quotes or substitutions in its arguments - so
+//    nothing else can ride along on the exemption, and the repo it acts on is the
+//    repo that gets checked;
+//  - visibility is asked of GitHub itself (`gh repo view`, resolving the repo the
+//    same way `gh pr merge` does), and anything but a clean PRIVATE answer relays;
+//  - a run that has read untrusted content still relays (checked in main()), since
+//    that is the run an injected instruction would be steering.
+const PRIVATE_MERGE_SHAPE = /^(?:cd\s+([^\s;&|<>`$()'"]+)\s*&&\s*)?gh\s+pr\s+merge((?:\s+[\w./:#=@~+-]+)*)\s*$/;
+
+// Returns { dir, repo } for a command the exemption may consider, or null. [repo] is
+// owner/name when the command names one (--repo, -R, or a PR URL), else null, meaning
+// "whatever gh resolves from [dir]".
+function privateMergeTarget(command) {
+  const m = PRIVATE_MERGE_SHAPE.exec(String(command || '').trim());
+  if (!m) return null;
+  const args = m[2].trim() ? m[2].trim().split(/\s+/) : [];
+  const repos = new Set();
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--repo' || a === '-R') {
+      if (i + 1 >= args.length) return null;
+      repos.add(args[++i]);
+    } else if (a.startsWith('--repo=')) {
+      repos.add(a.slice('--repo='.length));
+    } else if (/^https?:/i.test(a)) {
+      const u = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/\d+\/?$/i.exec(a);
+      if (!u) return null;
+      repos.add(u[1]);
+    }
+  }
+  if (repos.size > 1) return null;
+  const repo = repos.size ? [...repos][0] : null;
+  if (repo !== null && !/^[\w.-]+\/[\w.-]+$/.test(repo)) return null;
+  let dir = m[1] || null;
+  if (dir && (dir === '~' || dir.startsWith('~/'))) dir = path.join(os.homedir(), dir.slice(1));
+  return { dir, repo };
+}
+
+// Asks GitHub. [run] is injectable so the tests never touch the network.
+function isPrivateRepoMerge(command, cwd, run = defaultGh) {
+  const target = privateMergeTarget(command);
+  if (!target) return false;
+  const dir = target.dir ? path.resolve(cwd || process.cwd(), target.dir) : (cwd || process.cwd());
+  const args = ['repo', 'view', ...(target.repo ? [target.repo] : []), '--json', 'visibility', '-q', '.visibility'];
+  try {
+    return String(run(args, dir) || '').trim() === 'PRIVATE';
+  } catch (e) {
+    return false;
+  }
+}
+
+function defaultGh(args, cwd) {
+  const r = require('child_process').spawnSync('gh', args, { cwd, encoding: 'utf8', timeout: 15000, windowsHide: true });
+  if (r.status !== 0) throw new Error('gh repo view failed');
+  return r.stdout;
+}
+
+// The whole exemption decision, pure apart from [run], so the tests can pin every
+// condition: opted in, the plain egress rule (nothing riskier) matched, an untainted
+// run, and GitHub saying PRIVATE.
+function privateMergePasses(rule, command, ctx, cwd, env = process.env, run = defaultGh) {
+  if (env.HALYARD_RELAY_PRIVATE_MERGE !== '1') return false;
+  if (!rule || rule.name !== 'network-egress' || (ctx && ctx.tainted)) return false;
+  return isPrivateRepoMerge(command, cwd, run);
 }
 
 // Permission modes in which Claude Code asks the human at the keyboard itself.
@@ -266,9 +592,14 @@ async function main() {
   // Cheapest gate first: an attended session needs no phone round-trip at all.
   if (!isUnattended(input)) return passthrough();
 
-  const command = (input.tool_input && input.tool_input.command) || '';
-  const rule = matchRelayRule(input.tool_name, command);
+  const toolInput = input.tool_input || {};
+  // The state before this call decides; this call's own reads are recorded for the next.
+  const ctx = readTaint(input.session_id);
+  updateTaint(input.session_id, input.tool_name, toolInput);
+  const command = FETCH_TOOLS.has(input.tool_name) ? (toolInput.url || '') : (toolInput.command || '');
+  const rule = matchRelayRule(input.tool_name, command, ctx);
   if (!rule) return passthrough();
+  if (privateMergePasses(rule, command, ctx, input.cwd)) return passthrough();
 
   const token = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
 
@@ -314,6 +645,18 @@ async function main() {
       // transient poll failure, keep trying until deadline
     }
   }
+  // Recorded so the phone's "Needs your tap" card can offer it again later; a
+  // timed-out push or merge otherwise just disappears. Best-effort, never blocks.
+  try {
+    await fetch(`${BASE}/api/ask/missed?token=${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, command, cwd: input.cwd || null, question: rule.label }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (e) {
+    // bridge gone: the deny below still stands
+  }
   return decide('deny', 'no phone response within timeout');
 }
 
@@ -324,7 +667,10 @@ if (require.main === module) {
 }
 
 module.exports = {
-  MUTATING_GIT, DESTRUCTIVE_FS, NETWORK_EGRESS, RELAY_RULES,
+  MUTATING_GIT, RISKY_GIT, isRiskyGit, DESTRUCTIVE_FS, NETWORK_EGRESS, RELAY_RULES,
   RELAYED_TOOLS, ATTENDED_MODES, shouldRelay, matchRelayRule, isLoopbackOnly, isUnattended,
   enabledRules, baseUrl,
+  FETCH_TOOLS, TAINT_TOOLS, isLocalHost, outboundHosts, isSecretEgress, isDataBearingUrl,
+  taintSource, readsSecret, matchTaintRule, readTaint, updateTaint, TAINT_DIR,
+  privateMergeTarget, isPrivateRepoMerge, privateMergePasses,
 };

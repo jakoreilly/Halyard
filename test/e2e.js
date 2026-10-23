@@ -273,6 +273,60 @@ async function main() {
     } catch (e) { record('an undelivered reply fails the run visibly instead of vanishing', e); }
     await client.post('/api/inbox/dismiss-failed');
 
+    // --- Auto: a light start hands up, the heavy model resumes the turn ---
+    // Then the heavy turn ends past the clear limit, so the session is dropped
+    // while the handover it wrote is kept.
+    const autoFile = path.join(dir, 'auto-agent.js');
+    const argLog = path.join(dir, 'auto-args.jsonl');
+    fs.writeFileSync(autoFile, `
+const fs = require('fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(argLog)}, JSON.stringify(args) + '\\n');
+const chunks = [];
+process.stdin.on('data', (c) => chunks.push(c));
+process.stdin.on('end', () => {
+  const prompt = Buffer.concat(chunks).toString('utf8');
+  const emit = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+  const model = args[args.indexOf('--model') + 1];
+  if (model === 'fake-light') {
+    emit({ type: 'system', session_id: 'auto-1' });
+    emit({ type: 'result', session_id: 'auto-1', result: prompt.includes('MODEL ROUTING') ? 'ESCALATE: needs real work' : 'no routing note', total_cost_usd: 0.01, duration_ms: 1000, num_turns: 1 });
+  } else {
+    emit({ type: 'system', session_id: 'auto-2' });
+    emit({ type: 'assistant', message: { usage: { input_tokens: 5, cache_read_input_tokens: 160000 }, content: [{ type: 'text', text: 'working' }] } });
+    emit({ type: 'result', session_id: 'auto-2', result: 'heavy did it' + String.fromCharCode(10) + 'HANDOVER: heavy summary', total_cost_usd: 0.05, duration_ms: 2000, num_turns: 2 });
+  }
+  process.exit(0);
+});
+`);
+    cfg.engines.fake.args = [autoFile, '--model', '{{model}}', '--resume', '{{session}}'];
+    cfg.engines.fake.modelMap = { light: 'fake-light', heavy: 'fake-heavy' };
+    cfg.engines.fake.auto = { light: 'light', heavy: 'heavy' };
+    await client.post('/api/inbox', { message: 'what is the weather', thread: 'auto', model: 'auto' });
+    await watcher.runOnce({ cfg, paths, log, client });
+    try {
+      const calls = fs.readFileSync(argLog, 'utf8').trim().split('\n').map(JSON.parse);
+      assert.strictEqual(calls.length, 2, 'the light turn and the heavy retake');
+      assert.strictEqual(calls[0][calls[0].indexOf('--model') + 1], 'fake-light');
+      assert.strictEqual(calls[1][calls[1].indexOf('--model') + 1], 'fake-heavy');
+      assert.strictEqual(calls[1][calls[1].indexOf('--resume') + 1], 'auto-1', 'the heavy model resumes the light one\'s session');
+      const n = (await client.get('/api/notifications')).items[0];
+      assert.ok(n.message.startsWith('heavy did it'), n.message);
+      assert.ok(!n.message.includes('ESCALATE'));
+      assert.ok(/handed up/.test(n.message), 'the footer says it was handed up');
+      assert.strictEqual(n.model, 'heavy');
+      assert.ok(Math.abs(n.costUsd - 0.06) < 1e-9, 'costs add up');
+      record('Auto: a light turn that escalates is retaken by the heavy model on the same session', null);
+    } catch (e) { record('Auto: a light turn that escalates is retaken by the heavy model on the same session', e); }
+    try {
+      const t = await client.get('/api/handover?thread=auto');
+      assert.strictEqual(t.text, 'heavy summary');
+      assert.strictEqual(t.hasSession, false, 'past the clear limit the session is dropped');
+      assert.ok(/auto-cleared/.test((await client.get('/api/notifications')).items[0].message));
+      record('a run past the context limit drops the session and keeps the handover', null);
+    } catch (e) { record('a run past the context limit drops the session and keeps the handover', e); }
+    cfg.engines.fake.args = agentArgs;
+
     // --- Stop takes the agent's children with it (Windows) ----------------
     const pidFile = path.join(dir, 'grandchild.pid');
     process.env.FAKE_SLOW = '1';
