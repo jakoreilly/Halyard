@@ -18,6 +18,23 @@ Self-hosted, zero dependencies, no open ports, runs on Windows, macOS and Linux.
 
 ---
 
+## Non-technical quick start
+
+You need a computer with [Claude Code](https://docs.claude.com/en/docs/claude-code) on it and a phone. About ten minutes.
+
+1. **Install Node.js** from [nodejs.org](https://nodejs.org) (the LTS button), and **sign in to Claude Code** once: open a terminal, type `claude`, follow the prompts.
+2. **Install Tailscale** from [tailscale.com/download](https://tailscale.com/download) on the computer **and** the phone, and sign in to both with the same account. This is what lets your phone reach the computer privately, from anywhere.
+3. **Get Halyard.** Open a terminal and paste one line - on a Mac or Linux:
+   `curl -fsSL https://raw.githubusercontent.com/jakoreilly/Halyard/main/scripts/install.sh | sh`
+   - on Windows (PowerShell):
+   `irm https://raw.githubusercontent.com/jakoreilly/Halyard/main/scripts/install.ps1 | iex`
+4. **Follow the setup page** that opens in your browser. Each step gets a green tick: press the buttons to wire up approvals, turn on the tunnel, start Halyard, and (if you like) start it on login. Nothing changes until you press a button.
+5. **Scan the QR code** on that page with your phone's camera, open the link, and add it to your home screen. A short tour shows you around. That's it - message your computer from the phone.
+
+Stuck? Run `halyard doctor` in a terminal: it lists anything not done yet, each with one line saying how to fix it. No browser handy (over SSH, say)? `halyard setup --no-browser` walks the same steps in the terminal, and `halyard token --qr` prints the QR code there. (If the terminal says `halyard` is not found, use the full command the installer printed at the end, e.g. `node ~/.halyard-src/bin/halyard.js doctor`.)
+
+---
+
 ## What it is
 
 A tiny local service that turns your phone into a front end for the coding agent already
@@ -277,18 +294,28 @@ dropped whole, so one template covers "no model selected" and "no session to res
 ## Commands
 
 ```
-halyard setup                 create config, token and push keys
+halyard setup [--no-browser]  guided setup: a browser page with a tick per step
+                              (or the same steps in the terminal)
 halyard start                 server + watcher (the normal command)
 halyard serve                 server only
 halyard watch                 one watcher pass (for cron / systemd timer)
-halyard doctor                what is configured, reachable and risky
-halyard token [--url]         print the token, or the full link
+halyard doctor                what is configured, reachable and risky, with a
+                              plain-English fix line for each problem
+halyard token [--url|--qr]    print the token, the full link, or a QR code to scan
 halyard hook-config           agent hook config for the approve/deny relay
+  [--install [--yes]]         ...or merge it into your Claude settings, with a backup
 halyard install-service       write a systemd unit / launchd plist / scheduled task
+  [--register]                ...and turn it on for your user
 ```
 
-`install-service` **writes** the unit and prints the one command that registers it. It never
-registers it for you — that is a system-wide change that outlives the process making it.
+`install-service` on its own **writes** the unit and prints the commands that register it.
+`--register` (what setup's "Yes, start on login" runs) also runs them, for your user only, and
+prints the one-line undo. `hook-config --install` shows the exact change to your Claude
+settings file first, backs the file up, keeps every hook that is not Halyard's, and refuses to
+touch a file it cannot parse. The setup page changes nothing until you press a button.
+
+On a machine whose Tailscale address already serves something else, setup puts Halyard on
+`:8443` rather than taking that address over.
 
 ---
 
