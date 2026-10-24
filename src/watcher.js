@@ -34,6 +34,9 @@ const path = require('path');
 const { parserFor, newResult } = require('./engines');
 const lock = require('./lock');
 const threads = require('./threads');
+const router = require('./router');
+const prunemod = require('./prune');
+const usagemod = require('./usage');
 const { resolveCommand } = require('./which');
 
 // ---------------------------------------------------------------------------
@@ -108,6 +111,7 @@ function hookEnv({ cfg, paths, client }) {
   // An empty list is left unset rather than passed as '', although the hook
   // reads both as "all rules" - absent is the one reading nothing can get wrong.
   if (Array.isArray(relay.rules) && relay.rules.length) env.HALYARD_RELAY_RULES = relay.rules.join(',');
+  if (relay.privateMergeWithoutTap === true) env.HALYARD_RELAY_PRIVATE_MERGE = '1';
   return env;
 }
 
@@ -290,7 +294,7 @@ function runAgent(opts) {
 // ---------------------------------------------------------------------------
 // Prompt assembly
 
-function buildPrompt({ item, thread, engine, cfg, secretsDir }) {
+function buildPrompt({ item, thread, engine, cfg, secretsDir, routingNote }) {
   const parts = [];
   parts.push(
     'You are answering a message sent from a phone through Halyard, a local bridge to this machine.',
@@ -320,6 +324,7 @@ function buildPrompt({ item, thread, engine, cfg, secretsDir }) {
     '',
     `New message from phone (thread "${thread.name}"):`,
     item.message,
+    ...(routingNote ? ['', routingNote] : []),
     '',
     'When you have finished, end your reply with a line starting exactly "HANDOVER:" followed by 2-4 sentences worth carrying into the next message in this thread, or "HANDOVER: none".',
   );
@@ -358,7 +363,10 @@ function changeFooter(result) {
     if (result.costUsd != null) bits.push(`$${result.costUsd.toFixed(4)}`);
     if (result.durationMs != null) bits.push(`${Math.round(result.durationMs / 1000)}s`);
     if (result.numTurns != null) bits.push(`${result.numTurns} turns`);
-    return bits.length ? `\n\n---\n${bits.join(' · ')}` : '';
+    if (result.contextTokens) bits.push(`${(result.contextTokens / 1000).toFixed(1)}k context`);
+    const notes = (result.notes || []).filter(Boolean);
+    if (!bits.length && !notes.length) return '';
+    return `\n\n---\n${[bits.join(' · '), ...notes].filter(Boolean).join('\n')}`;
   } catch (e) {
     return '';
   }
@@ -404,12 +412,18 @@ async function processOne(ctx, item) {
   const thread = threads.read(paths, item.thread);
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+  // Auto and the background model are resolved here, once, so the run box, the
+  // --model flag and the reply's metadata all name the same model.
+  const route = router.plan(item, engine, cfg);
+  let modelKey = route.model;
+
   await client.tryPost('/api/run/start', {
-    runId, engine: engineName, thread: thread.name, message: item.message, model: item.model || '',
+    runId, engine: engineName, thread: thread.name, message: item.message, model: modelKey, modelLabel: route.label,
   });
 
   const result = newResult();
-  const prompt = buildPrompt({ item, thread, engine, cfg, secretsDir: paths.secrets });
+  const routingNote = route.auto && route.auto.tier === 'light' ? router.escalateNote(route.auto.light) : '';
+  let prompt = buildPrompt({ item, thread, engine, cfg, secretsDir: paths.secrets, routingNote });
 
   // Resolved once per run, not once per turn: a resume is the same binary, and
   // re-running the filesystem probes on every retry would only add ways for a
@@ -433,7 +447,7 @@ async function processOne(ctx, item) {
       workspace: cfg.workspace,
       secrets: paths.secrets,
       permissionMode: cfg.permissionMode,
-      model: (engine.modelMap && engine.modelMap[item.model]) || item.model || '',
+      model: (engine.modelMap && engine.modelMap[modelKey]) || modelKey || '',
       session: sessionId || '',
     });
     log.info(`run ${runId}: ${resolved.command} ${args.join(' ')}`, { thread: thread.name, engine: engineName });
@@ -477,7 +491,44 @@ async function processOne(ctx, item) {
     await runWith('');
   }
 
+  // Auto escalation: the light turn answered only "ESCALATE: <reason>", so the
+  // heavy model retakes the same turn, resuming the session the light one just
+  // wrote so it sees the original message and everything already looked at.
+  // Costs add up, so the footer and the ledger show what the message really cost.
+  const escalated = route.auto && route.auto.tier === 'light' && !result.killed && !result.timedOut && result.exitCode === 0
+    ? router.escalation(result.reply) : null;
+  if (escalated) {
+    const first = { ...result };
+    log.info(`run ${runId}: ${route.auto.light} handed up to ${route.auto.heavy} (${escalated})`);
+    modelKey = route.auto.heavy;
+    client.tryPost('/api/run/activity', {
+      runId, engine: engineName, activity: `${route.auto.light} handed this to ${route.auto.heavy}: ${escalated}`, modelLabel: `${modelKey} (auto)`,
+    });
+    const resumeFrom = first.sessionId || thread.session || '';
+    if (first.sessionId) {
+      prompt = `The lighter model handed this turn up to you: ${escalated}. Take over now and handle the phone's message from the previous turn in full - the instructions in that turn still apply.`;
+    } else {
+      prompt = buildPrompt({ item, thread, engine, cfg, secretsDir: paths.secrets });
+    }
+    Object.assign(result, newResult());
+    await runWith(resumeFrom);
+    for (const k of ['costUsd', 'durationMs', 'numTurns']) {
+      if (first[k] != null && result[k] != null) result[k] += first[k];
+    }
+    result.notes = [`Model: auto - ${route.auto.light} handed up to ${route.auto.heavy} (${escalated})`];
+  } else if (route.auto) {
+    result.notes = [`Model: auto - ${modelKey} (${route.auto.reason})`];
+  }
+
   if (result.sessionId) threads.writeSession(paths, thread.name, result.sessionId);
+
+  // Long threads. Clear first: at or over the clear limit the session is dropped
+  // anyway (the handover is kept), so there is nothing to shrink. Never fails the
+  // reply - the worst case is a note in the footer.
+  if (result.sessionId && !result.killed && !result.timedOut) {
+    const note = longThread({ cfg, paths, threadName: thread.name, result, log });
+    if (note) result.notes = (result.notes || []).concat(note);
+  }
 
   if (result.killed) throw new Error('run cancelled from the phone');
   if (result.timedOut) throw new Error(`run exceeded its ${Math.round(cfg.runTimeoutMs / 60000)} minute budget and was stopped`);
@@ -523,7 +574,7 @@ async function processOne(ctx, item) {
       thread: thread.name,
       engine: engineName,
       prompt: item.message,
-      model: item.model || '',
+      model: modelKey || item.model || '',
       costUsd: result.costUsd,
       durationMs: result.durationMs,
       numTurns: result.numTurns,
@@ -541,6 +592,82 @@ async function processOne(ctx, item) {
   // last saw, not from a summary of an answer it never received.
   if (handover !== null) threads.writeHandover(paths, thread.name, handover);
   return { runId, engine: engineName };
+}
+
+// The long-thread tiers, after a run that has a session. Returns a footer note
+// or null. [shrink] is injectable so the tests need no real CLI transcript.
+function longThread({ cfg, paths, threadName, result, log, shrink = prunemod.shrinkSession }) {
+  const c = cfg.context || {};
+  const tokens = Number(result.contextTokens) || 0;
+  if (!tokens) return null;
+  const clearAt = Number(c.clearAtTokens) || 0;
+  const shrinkAt = Number(c.shrinkAtTokens) || 0;
+  // Same as the phone's "Clear context" except the handover is kept, so the
+  // thread carries on from its summary instead of from nothing. Only the session
+  // is dropped - that is the part that grows.
+  if (clearAt > 0 && tokens >= clearAt) {
+    threads.clearSession(paths, threadName);
+    return `Context auto-cleared (over ${Math.round(clearAt / 1000)}k) - the next message starts fresh from the handover summary.`;
+  }
+  // Below the shrink threshold it is not worth it: the shrink changes the session
+  // id, so the next turn misses the prompt cache, and cutting old tool output
+  // loses detail a later turn may want.
+  if (!(shrinkAt > 0 && tokens >= shrinkAt)) return null;
+  try {
+    const minPercent = Number.isFinite(Number(c.shrinkMinPercent)) ? Number(c.shrinkMinPercent) : 15;
+    const r = shrink(result.sessionId, cfg.workspace, { minPercent });
+    if (r.applied) {
+      threads.writeSession(paths, threadName, r.newSessionId);
+      log.info(`thread ${threadName}: transcript shrunk ${Math.round(r.savedPercent)}% into ${r.newSessionId} (was ${result.sessionId})`);
+      return `Transcript auto-shrunk ${Math.round(r.savedPercent)}% (context was over ${Math.round(shrinkAt / 1000)}k)`;
+    }
+    // Not worth it this time is not news; anything else is.
+    return /^would save only/.test(r.note || '') ? null : `Auto-shrink skipped: ${r.note}`;
+  } catch (e) {
+    return `Auto-shrink failed: ${e.message}`;
+  }
+}
+
+// The usage guard. Decides BEFORE the pop, because pop is destructive: a guard
+// that popped first could only drop the message or run it anyway. Fails open -
+// usage unreadable, an error, no gauges, all mean "go ahead". Returns true when
+// the due message should stay queued this tick.
+async function usageHeld(ctx) {
+  const { cfg, client, paths, log } = ctx;
+  const g = cfg.usageGuard || {};
+  const max = Number(g.maxPercent) || 0;
+  if (max <= 0) return false;
+  const peek = await client.tryPost('/api/inbox/peek');
+  const item = peek && peek.item;
+  if (!item) return false;
+  const engine = cfg.engines[item.engine] || cfg.engines[cfg.defaultEngine];
+  // The gauges are Anthropic's; another engine does not draw on them.
+  if (!engine || engine.stream !== 'claude-json') return false;
+  const usage = await client.tryGet('/api/usage');
+  const over = usagemod.blockingGauge(usage, max);
+  const marker = path.join(paths.root, '.usage-hold');
+  if (!over) {
+    // Not blocked: clear any prior hold so the next one is announced at once.
+    try { fs.unlinkSync(marker); } catch (e) { /* none */ }
+    return false;
+  }
+  await client.tryPost('/api/inbox/hold', { id: item.id, gauge: over.name, percent: over.percent, resetsAt: over.resetsAt });
+  // At most one announcement per window, so a multi-hour hold does not evict
+  // every real reply from the phone's ring.
+  const every = Number(g.announceEveryMs) || 30 * 60 * 1000;
+  let last = 0;
+  try { last = fs.statSync(marker).mtimeMs; } catch (e) { /* first */ }
+  if (Date.now() - last >= every) {
+    const reset = over.resetsAt ? ` It resets at ${over.resetsAt}.` : '';
+    await client.tryPost('/api/notify', {
+      message: `[halyard] usage guard: ${over.name} is at ${Math.round(over.percent)}% (limit ${max}%), so your message is staying queued instead of running.${reset} It starts by itself once usage drops.`,
+      thread: item.thread || threads.DEFAULT_THREAD,
+      engine: item.engine || '',
+    });
+    try { fs.writeFileSync(marker, String(Date.now())); } catch (e) { /* best effort */ }
+    log.info(`usage guard holding ${item.id}: ${over.name} at ${over.percent}%`);
+  }
+  return true;
 }
 
 // Retries a throwing post with a short backoff. Sized to ride out a server
@@ -575,6 +702,9 @@ async function runOnce(ctx) {
 
   let item = null;
   try {
+    // Inside the try so the finally still releases the lock. Not consuming here
+    // is what ends the loop's re-trigger chain while usage stays high.
+    if (await usageHeld(ctx)) return false;
     const popped = await client.post('/api/inbox/pop');
     item = popped && popped.item;
     if (!item) return false;
@@ -641,5 +771,5 @@ function startLoop(ctx) {
 
 module.exports = {
   runOnce, startLoop, runAgent, buildArgs, buildPrompt, splitHandover, changeFooter, decideReroute, CAPACITY_OR_AUTH,
-  hookEnv, postWithRetry,
+  hookEnv, postWithRetry, longThread, usageHeld,
 };

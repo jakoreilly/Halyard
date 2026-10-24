@@ -70,13 +70,56 @@ returns.
 |---|---|---|
 | `relay.enabled` | `true` | Disabling it prints a warning naming what becomes unsupervised. |
 | `relay.timeoutMs` | `300000` | No answer inside this window is a **deny**. |
-| `relay.rules` | all three | `git`, `destructive-fs`, `network-egress`. Trim if a category is pure noise for you. An **empty or unset** list means all of them, never none. |
+| `relay.rules` | all five | `git`, `destructive-fs`, `network-egress`, `secret-egress`, `tainted-egress` (see [SECURITY.md](../SECURITY.md#what-it-matches)). Trim if a category is pure noise for you. An **empty or unset** list means all of them, never none. A config file written before the last two existed lists only three, and so leaves them off - add them. |
+| `relay.privateMergeWithoutTap` | `false` | `gh pr merge` on a repo GitHub reports as **PRIVATE** passes with no tap. Only a lone `gh pr merge` (optionally after one `cd <dir> &&`) qualifies, never in a run that has read untrusted content, and anything but a clean `PRIVATE` answer from `gh repo view` relays as usual. Public repos always relay. |
 
 The hooks run inside the agent's process, not inside Halyard, so the watcher hands them this
 install's settings through the environment of every run it starts: `HALYARD_DATA_DIR`,
-`HALYARD_PORT`, `HALYARD_URL`, `HALYARD_RELAY_TIMEOUT_MS` and `HALYARD_RELAY_RULES`. A session
+`HALYARD_PORT`, `HALYARD_URL`, `HALYARD_RELAY_TIMEOUT_MS`, `HALYARD_RELAY_RULES` and (when
+opted in) `HALYARD_RELAY_PRIVATE_MERGE`. A session
 you start by hand gets none of them, so its hooks use the defaults (port 4545 and the OS data
 dir) unless you export them yourself.
+
+When a relay question times out, the command is denied as before **and** kept in the phone's
+**Needs your tap** card (up to ten, persisted). *Run again* queues a run that executes it once
+more, so the relay asks again while you are there; it never runs the command itself.
+
+### Usage guard
+
+| Key | Default | Notes |
+|---|---|---|
+| `usageGuard.maxPercent` | `0` (off) | If any of Claude Code's subscription usage windows is at or above this, a due message stays **queued** rather than popped, and the phone is told. It starts by itself once usage drops. |
+| `usageGuard.announceEveryMs` | `1800000` | A long hold is announced at most once per this window, so it does not flood the reply list. |
+
+Decides **before** the pop (a guard that popped first could only drop the message), and
+**fails open**: no stored Claude sign-in, an error from the usage endpoint, or no gauges all
+let the run go ahead. Only engines that speak `claude-json` are held - the gauges are
+Anthropic's. The same numbers are on the Work tab's **Usage** panel, which refreshes every three
+minutes while it is open and the page is visible.
+
+### Long threads
+
+| Key | Default | Notes |
+|---|---|---|
+| `context.shrinkAtTokens` | `90000` | After a run whose context ended at or above this, the thread's transcript has its bulky tool output pruned into a **new** session id ([TRANSCRIPT-PRUNING.md](TRANSCRIPT-PRUNING.md)) - if that saves at least `shrinkMinPercent`. The original transcript is never modified. |
+| `context.shrinkMinPercent` | `15` | Below this the shrink is skipped: it costs the next turn its prompt cache. |
+| `context.clearAtTokens` | `150000` | At or above this the session is dropped and the next message starts fresh **from the handover summary**, which is kept. |
+
+`0` disables either tier. Context size is read from the latest main-agent message's usage
+(input plus cache read plus cache creation) - not the result event's, which is summed over the
+run's turns. The reply footer shows it on every turn.
+
+### Models: Auto and background runs
+
+| Key | Default | Notes |
+|---|---|---|
+| `engines.<name>.auto` | claude: `{ "light": "sonnet", "heavy": "opus" }` | Offers **Auto** in the phone's model picker. A message that looks light (short, no attachment, no work word, not a go-ahead like "1 and 3 please") starts on `light`; anything else on `heavy`. A light turn may answer only `ESCALATE: <reason>`, and `heavy` retakes the same turn resuming its session. `workWords` overrides the work-word list. `null` hides Auto for that engine. |
+| `background.model` | `""` (off) | A cheaper model (a `modelMap` key, e.g. `haiku`) for runs nobody is waiting on. Fills in only a **missing** model; a message that chose one keeps it. |
+| `background.threads` | `[]` | Threads whose messages are background runs. |
+| `background.repeats` | `false` | Treat every repeating scheduled message as a background run. |
+
+A message posted to `/api/inbox` with `"background": true` is a background run too, which is
+how a script or cron job marks its own chores.
 
 ### Failover
 
@@ -123,6 +166,7 @@ HALYARD_DATA_DIR        HALYARD_HOST            HALYARD_PORT
 HALYARD_PUBLIC_URL      HALYARD_ENGINE          HALYARD_WORKSPACE
 HALYARD_PERMISSION_MODE HALYARD_RELAY           HALYARD_NTFY_TOPIC
 HALYARD_LOG_LEVEL       HALYARD_RELAY_RULES     HALYARD_RELAY_TIMEOUT_MS
+HALYARD_USAGE_MAX_PERCENT                       HALYARD_BACKGROUND_MODEL
 ```
 
 ## CLI flags
@@ -148,7 +192,7 @@ CLI nobody can read.
   "workspace": "/home/you/code/api",
   "defaultEngine": "claude",
   "permissionMode": "default",
-  "relay": { "enabled": true, "rules": ["git", "destructive-fs", "network-egress"] },
+  "relay": { "enabled": true, "rules": ["git", "destructive-fs", "network-egress", "secret-egress", "tainted-egress"] },
   "push": { "enabled": true, "subject": "mailto:you@example.com" }
 }
 ```
@@ -164,7 +208,7 @@ additionally stop and ask your phone.
   "workspace": "/home/you/code",
   "permissionMode": "bypassPermissions",
   "runTimeoutMs": 3600000,
-  "relay": { "enabled": true, "rules": ["git", "destructive-fs", "network-egress"] },
+  "relay": { "enabled": true, "rules": ["git", "destructive-fs", "network-egress", "secret-egress", "tainted-egress"] },
   "push": { "enabled": true, "subject": "mailto:you@example.com" }
 }
 ```

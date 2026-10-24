@@ -21,8 +21,13 @@
   "relay": {
     "enabled": true,
     "timeoutMs": 300000,
-    "rules": ["git", "destructive-fs", "network-egress"]
+    "rules": ["git", "destructive-fs", "network-egress", "secret-egress", "tainted-egress"],
+    "privateMergeWithoutTap": false
   },
+
+  "usageGuard": { "maxPercent": 0, "announceEveryMs": 1800000 },
+  "context": { "shrinkAtTokens": 90000, "shrinkMinPercent": 15, "clearAtTokens": 150000 },
+  "background": { "model": "", "threads": [], "repeats": false },
 
   "push": {
     "enabled": true,

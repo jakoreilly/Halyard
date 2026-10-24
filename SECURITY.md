@@ -67,9 +67,19 @@ unnecessary relay costs one tap and a skipped one costs the whole backstop.
 
 | Rule | Matches | Deliberately does not |
 |---|---|---|
-| `git` | `add commit push checkout switch branch merge rebase reset revert tag stash restore clean cherry-pick rm mv`, including `git -C <path> push` and `git -c k=v commit` | `status`, `log`, `diff`, `fetch` |
+| `git` | git that **publishes or discards** work: `push`, `clean`, `restore`, `reset --hard/--merge/--keep`, `checkout` (anything but `-b`), `switch -f`, `branch -D/-f`, `stash drop/clear`, `rm -f` - including `git -C <path> push`, and judged per call so `git commit && git push` relays on the push | undoable local git - `add`, `commit`, `switch`, `checkout -b`, `merge`, `rebase`, `revert`, `tag`, `stash`/`pop`, a plain or `--soft` reset - which the reflog can undo, and reads (`status`, `log`, `diff`, `fetch`) |
 | `destructive-fs` | recursion: `rm -rf`, `rm --recursive`, `rmdir /s`, `Remove-Item -Recurse`, `mkfs`, `diskpart`, `Format-Volume` | `rm -f one-file.txt` |
 | `network-egress` | requests with a body or a non-GET method, `scp`/`rsync` to a remote target, mutating `gh` subcommands | plain GETs, and loopback-only requests |
+| `secret-egress` | one command that both reads a secret (a `secrets` dir, `token.txt`, Halyard's own secrets folder) and names an off-machine host | the same read with no network, or a loopback call |
+| `tainted-egress` | once the run has read untrusted content (WebFetch, WebSearch, any MCP tool, a file under `uploads/` or `Downloads/`): any shell command naming an off-machine host, and a web fetch whose URL looks data-shaped (or any fetch once a secret was also read) | ordinary research reads of article-shaped URLs; the call that first reads the untrusted content |
+
+"Off-machine" is anything but loopback, private LAN ranges, a Tailscale tailnet
+(`100.64.0.0/10`, `*.ts.net`), `*.local` and bare single-label hostnames. A host hidden in
+userinfo (`https://x:y@host.example`), an IPv6 literal, a scheme-less `curl host.example/x`
+and a bare public IPv4 all count. Taint is kept per agent session in a small file under the
+temp directory, so it survives across the run's tool calls; it is textual like the rest - a
+backstop against a run that was talked into something, not a sandbox. That is also why the
+hook matcher includes the read tools (`WebFetch|WebSearch|Read|mcp__.*`), not only the shells.
 
 Two matches worth calling out, because both are the obvious way to write the command you
 would least want unrelayed:

@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const threads = require('./threads');
 const push = require('./push');
 const lockmod = require('./lock');
+const usagemod = require('./usage');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
@@ -192,7 +193,17 @@ function createServer(ctx) {
     // matters, since that is when a lost RESPONSE (as opposed to a lost
     // request) is most likely.
     recentClients: [],
+    // Relay approvals that timed out with nobody at the phone: the hook denied
+    // them, so the work they gated (a push, a merge) silently did not happen.
+    // Kept, persisted, until the phone re-runs or dismisses each one.
+    missedTaps: [],
+    // The message the watcher's usage guard is holding: { id, gauge, percent,
+    // resetsAt, at }. Not persisted - the next guarded tick re-reports it - and
+    // it describes a queued item and nothing else: once that item is popped or
+    // deleted, holdView() drops it, so there is no separate "clear" to forget.
+    usageHold: null,
   };
+  const MAX_MISSED_TAPS = 10;
 
   function loadState() {
     try {
@@ -201,6 +212,7 @@ function createServer(ctx) {
       if (Array.isArray(raw.notifications)) state.notifications = raw.notifications;
       if (raw.lastFailed) state.lastFailed = raw.lastFailed;
       if (Array.isArray(raw.recentClients)) state.recentClients = raw.recentClients;
+      if (Array.isArray(raw.missedTaps)) state.missedTaps = raw.missedTaps.slice(-MAX_MISSED_TAPS);
       log.info(`restored ${state.inbox.length} queued, ${state.notifications.length} replies`);
     } catch (e) {
       // A corrupt state file is logged and skipped, never fatal. An unreachable
@@ -221,6 +233,7 @@ function createServer(ctx) {
         notifications: state.notifications,
         lastFailed: state.lastFailed,
         recentClients: state.recentClients,
+        missedTaps: state.missedTaps,
       }));
     } catch (e) {
       log.error(`could not persist state: ${e.message}`);
@@ -427,6 +440,9 @@ function createServer(ctx) {
       // already hopped engines once, so two engines that both fail on it
       // cannot ping-pong it back and forth forever.
       rerouted: !!body.rerouted,
+      // Nobody is waiting on this one (a script, a scheduled chore), so the
+      // configured background model may run it - see src/router.js.
+      background: !!body.background,
     };
     if (body.front) state.inbox.unshift(item); else state.inbox.push(item);
     if (clientId) {
@@ -546,6 +562,100 @@ function createServer(ctx) {
     return json(res, 200, { ok: true });
   });
 
+  // The relay hook, when its question went unanswered until the deadline. The
+  // pending prompt is cleared too: the hook has already denied, so an Approve
+  // tapped on it now would do nothing while looking like it worked.
+  route('POST', '/api/ask/missed', async (req, res) => {
+    const body = await readJson(req);
+    const command = clampStr(body.command, 2000);
+    if (!command) return json(res, 400, { error: 'command is required' });
+    if (state.current && state.current.id === body.id && state.current.status === 'pending') state.current = null;
+    const id = clampStr(body.id, 64) || newId();
+    if (!state.missedTaps.some((m) => m.id === id)) {
+      state.missedTaps.push({
+        id, command, cwd: clampStr(body.cwd, 500) || null, question: clampStr(body.question, 300) || null, missedAt: Date.now(),
+      });
+      state.missedTaps = state.missedTaps.slice(-MAX_MISSED_TAPS);
+    }
+    log.info(`relay tap missed: ${command.replace(/\s+/g, ' ').slice(0, 160)}`);
+    saveState();
+    return json(res, 200, { ok: true });
+  });
+
+  // Run again queues an ordinary run that executes the command once more - which
+  // raises the same relay question again, now that someone is at the phone. It
+  // never runs the command itself: the approval stays the hook's, as before.
+  route('POST', '/api/missed/rerun', async (req, res) => {
+    const body = await readJson(req);
+    const i = state.missedTaps.findIndex((m) => m.id === body.id);
+    if (i < 0) return json(res, 404, { error: 'no such missed tap' });
+    const [m] = state.missedTaps.splice(i, 1);
+    const item = {
+      id: newId(),
+      at: Date.now(),
+      message: `Re-run a command whose approval timed out (${new Date(m.missedAt).toISOString()}). It will ask the phone to approve again; the phone is here now.\n`
+        + `In ${m.cwd || 'the directory it names'}, run exactly this once, unchanged:\n\n${m.command}\n\n`
+        + 'Then reply in one or two lines with the result. If it is denied or fails, say so and stop - do not retry or work around it.',
+      thread: threads.DEFAULT_THREAD,
+      engine: cfg.defaultEngine,
+      model: '',
+      runAfter: null,
+      repeat: null,
+    };
+    state.inbox.unshift(item);
+    saveState();
+    ctx.nudge();
+    return json(res, 200, { ok: true, id: item.id });
+  });
+
+  route('POST', '/api/missed/dismiss', async (req, res) => {
+    const body = await readJson(req);
+    const before = state.missedTaps.length;
+    state.missedTaps = body.all === true ? [] : state.missedTaps.filter((m) => m.id !== body.id);
+    if (state.missedTaps.length !== before) saveState();
+    return json(res, 200, { ok: true, remaining: state.missedTaps.length });
+  });
+
+  // --- usage -------------------------------------------------------------
+
+  // Cached for a minute: the panel, the watcher's guard and a second phone can
+  // all ask at once, and the upstream endpoint has answered 429 to heavier
+  // polling than that. An error is cached too, briefly, for the same reason.
+  let usageCache = null;
+  route('GET', '/api/usage', async (req, res, url) => {
+    const fresh = url.searchParams.get('fresh') === '1';
+    if (!fresh && usageCache && Date.now() - usageCache.at < (usageCache.data.error ? 15000 : 60000)) {
+      return json(res, 200, usageCache.data);
+    }
+    const data = await (ctx.fetchUsage || usagemod.fetchUsage)();
+    usageCache = { at: Date.now(), data };
+    return json(res, 200, data);
+  });
+
+  // The usage guard, on each tick it holds a message.
+  route('POST', '/api/inbox/hold', async (req, res) => {
+    const body = await readJson(req);
+    if (!body.id || !state.inbox.some((i) => i.id === body.id)) return json(res, 404, { error: 'not queued' });
+    state.usageHold = {
+      id: body.id,
+      gauge: clampStr(body.gauge, 60) || null,
+      percent: Number.isFinite(Number(body.percent)) ? Math.round(Number(body.percent)) : null,
+      resetsAt: clampStr(body.resetsAt, 40) || null,
+      at: Date.now(),
+    };
+    bump('health');
+    return json(res, 200, { ok: true });
+  });
+
+  // Re-reported every guarded tick, so a hold that has gone quiet has ended.
+  function holdView() {
+    const h = state.usageHold;
+    if (!h) return null;
+    const item = state.inbox.find((i) => i.id === h.id);
+    if (!item || Date.now() - h.at > 10 * 60 * 1000) { state.usageHold = null; return null; }
+    return { id: item.id, message: clampStr(item.message, 120), gauge: h.gauge, percent: h.percent, resetsAt: h.resetsAt };
+  }
+
   // --- replies -----------------------------------------------------------
 
   route('POST', '/api/notify', async (req, res) => {
@@ -655,6 +765,9 @@ function createServer(ctx) {
       thread: threads.normalize(b.thread),
       message: clampStr(b.message, 2000),
       model: clampStr(b.model, 64),
+      // Display label for the run box ("sonnet (auto)", "haiku (background)"),
+      // not a model id anything acts on. Falls back to the model key.
+      modelLabel: clampStr(b.modelLabel, 60) || clampStr(b.model, 64),
       startedAt: Date.now(),
       activity: '',
       killRequested: false,
@@ -689,6 +802,8 @@ function createServer(ctx) {
       if (t.lines.length > cfg.transcriptRing) t.lines.shift();
     }
     if (typeof b.draft === 'string') t.draft = b.draft;
+    // An Auto escalation changes the model mid-run.
+    if (state.activeRun && typeof b.modelLabel === 'string' && b.modelLabel) state.activeRun.modelLabel = clampStr(b.modelLabel, 60);
     // A draft-only post bumps seq with no line attached. The page refetches the
     // transcript only when the counter moves, so without this a new draft would
     // sit here until some later tool call happened to move it - which for a
@@ -987,8 +1102,14 @@ function createServer(ctx) {
       // the reason written above transcriptFor().
       transcript: Object.fromEntries(Object.entries(state.transcripts).map(([k, v]) => [k, { runId: v.runId, seq: v.seq }])),
       engines: Object.values(cfg.engines).map((e) => ({
-        name: e.name, label: e.label, models: Object.keys(e.modelMap || {}), relay: !!e.supportsRelayHook,
+        name: e.name,
+        label: e.label,
+        models: (e.auto && e.auto.light && e.auto.heavy ? ['auto'] : []).concat(Object.keys(e.modelMap || {})),
+        relay: !!e.supportsRelayHook,
       })),
+      missedTaps: state.missedTaps.map((m) => ({ id: m.id, command: clampStr(m.command, 300), cwd: m.cwd, question: m.question, missedAt: m.missedAt })),
+      usageHold: holdView(),
+      usageGuard: { maxPercent: Number((cfg.usageGuard && cfg.usageGuard.maxPercent) || 0) },
       defaultEngine: cfg.defaultEngine,
       workspace: cfg.workspace,
       permissionMode: cfg.permissionMode,
@@ -1278,6 +1399,9 @@ function createServer(ctx) {
           bump('artifacts');
           return json(res, 200, { ok: true });
         }
+        // download=1 is the phone's Save button: the untouched file (no reader
+        // bar injected), as an attachment, so a kept copy works offline.
+        if (url.searchParams.get('download') === '1') return sendFile(res, file, { cache: 'no-store', download: true });
         if (['.html', '.htm'].includes(path.extname(file).toLowerCase())) return sendArtifactHtml(res, file);
         return sendFile(res, file, { cache: 'no-store' });
       }
@@ -1300,6 +1424,18 @@ function createServer(ctx) {
         return json(res, 200, { ok: true, path: dest, bytes: buf.length });
       }
 
+      // --- share target ---
+      // The service worker normally answers this POST itself (sw.js
+      // receiveShare) and it never reaches here; it only does when no worker
+      // controls the page yet, e.g. the first share after installing. The body
+      // is dropped rather than parsed, and the page says so, instead of losing
+      // the share silently.
+      if (p === '/share' && req.method === 'POST') {
+        req.resume();
+        res.writeHead(303, { Location: `/?token=${encodeURIComponent(token)}&shared=missed` });
+        return res.end();
+      }
+
       // --- page shell ---
       if (p === '/' || p === '/index.html') return sendFile(res, path.join(PUBLIC_DIR, 'index.html'));
       if (p === '/icon.svg') return sendFile(res, path.join(PUBLIC_DIR, 'icon.svg'), { cache: 'public, max-age=86400' });
@@ -1311,6 +1447,15 @@ function createServer(ctx) {
           name: 'Halyard', short_name: 'Halyard',
           start_url: `/?token=${encodeURIComponent(token)}`,
           display: 'standalone', background_color: '#fbfbf9', theme_color: '#fbfbf9',
+          // "Share -> Halyard" from any other app. Lands as a DRAFT in the
+          // compose box (see sw.js receiveShare), never as a sent message: a
+          // shared link nearly always needs a "summarise this" typed first.
+          share_target: {
+            action: `/share?token=${encodeURIComponent(token)}`,
+            method: 'POST',
+            enctype: 'multipart/form-data',
+            params: { title: 'title', text: 'text', url: 'url', files: [{ name: 'file', accept: ['*/*'] }] },
+          },
           icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
         });
       }

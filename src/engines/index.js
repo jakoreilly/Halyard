@@ -73,6 +73,19 @@ function claudeJson(line, result) {
   }
 
   if (evt.type !== 'assistant') return null;
+
+  // How big the conversation is right now: everything this request sent, cached
+  // or not. The result event's usage is summed over every turn of the run, so it
+  // says what the run cost, not how much a resume will resend - only the latest
+  // main-agent message says that. Sub-agent messages (parent_tool_use_id set) are
+  // their own context and are skipped.
+  const u = evt.message && evt.message.usage;
+  if (u && !evt.parent_tool_use_id) {
+    const ctx = ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens']
+      .reduce((a, k) => a + (Number(u[k]) || 0), 0);
+    if (ctx > 0) result.contextTokens = ctx;
+  }
+
   const content = (evt.message && evt.message.content) || [];
   let label = null;
 
@@ -218,6 +231,8 @@ function newResult() {
     durationMs: null,
     numTurns: null,
     usage: null,
+    // Size of the latest main-agent request, for the long-thread shrink/clear.
+    contextTokens: null,
     isError: false,
     engineExitCode: null,
     filesChanged: [],

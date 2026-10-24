@@ -51,6 +51,11 @@ const BUILTIN_ENGINES = {
       sonnet: 'claude-sonnet-5',
       haiku: 'claude-haiku-4-5-20251001',
     },
+    // The phone's "Auto" model: resolved per message to `light` or `heavy` (both
+    // modelMap keys) by src/router.js. A light start may hand the turn up by
+    // replying with only "ESCALATE: <reason>", and the heavy model retakes it on
+    // the same session. Set to null in an engine override to hide Auto for it.
+    auto: { light: 'sonnet', heavy: 'opus' },
     // Claude Code fails the whole run with this on stderr when a session id no
     // longer resolves. Detected so the watcher can drop the id and retake the
     // turn fresh, rather than reporting a failure the phone cannot act on.
@@ -134,8 +139,40 @@ const DEFAULTS = {
     enabled: true,
     timeoutMs: 5 * 60 * 1000,
     // Which rule families to relay. Trim if a category is pure noise for you.
-    rules: ['git', 'destructive-fs', 'network-egress'],
+    // secret-egress: one command that reads a secret and talks to the network.
+    // tainted-egress: any off-machine request once the run has read untrusted
+    // content (the web, an MCP tool, an upload or a download).
+    rules: ['git', 'destructive-fs', 'network-egress', 'secret-egress', 'tainted-egress'],
+    // `gh pr merge` on a repo GitHub reports as PRIVATE passes with no tap. Off
+    // by default: turn it on only if merging into your own private repos is
+    // something you would approve without reading anyway.
+    privateMergeWithoutTap: false,
   },
+
+  // --- usage guard ---------------------------------------------------------
+  // Before a message is popped, Claude Code's own subscription usage gauges
+  // (the numbers its /usage screen shows) are checked; if any window is at or
+  // above maxPercent the message stays queued and the phone is told, at most
+  // once per announceEveryMs. Fails OPEN: no credentials, an error or no gauges
+  // all let the run go ahead. 0 disables it. Only engines that speak
+  // claude-json are guarded - the gauges are Anthropic's.
+  usageGuard: { maxPercent: 0, announceEveryMs: 30 * 60 * 1000 },
+
+  // --- long threads ----------------------------------------------------------
+  // A resumed thread resends its whole history every turn, so it gets more
+  // expensive per message the longer nobody clears it. After a run whose
+  // context ended at or above shrinkAtTokens, the transcript's bulky tool
+  // output is pruned into a new session (if that saves shrinkMinPercent); at or
+  // above clearAtTokens the session is dropped and the next message starts
+  // fresh from the handover. 0 disables either.
+  context: { shrinkAtTokens: 90000, shrinkMinPercent: 15, clearAtTokens: 150000 },
+
+  // --- background runs -------------------------------------------------------
+  // A cheaper model for procedural runs nobody is waiting on: messages queued
+  // with `background: true`, repeats (when `repeats` is on), and any thread
+  // named in `threads`. Applies only when the message picked no model itself.
+  // '' disables it.
+  background: { model: '', threads: [], repeats: false },
 
   // --- delivery ------------------------------------------------------------
   push: { enabled: true, subject: 'mailto:you@example.com' },
@@ -168,6 +205,8 @@ const ENV_MAP = {
   HALYARD_RELAY: ['relay.enabled', (v) => v !== '0' && v !== 'false'],
   HALYARD_NTFY_TOPIC: ['ntfy.topic', String],
   HALYARD_LOG_LEVEL: ['logLevel', String],
+  HALYARD_USAGE_MAX_PERCENT: ['usageGuard.maxPercent', Number],
+  HALYARD_BACKGROUND_MODEL: ['background.model', String],
 };
 
 function isPlainObject(v) {

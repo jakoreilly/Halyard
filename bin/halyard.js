@@ -29,6 +29,11 @@ const { whichSync, resolveCommand } = require('../src/which');
 
 const pkg = require('../package.json');
 
+// Which tools reach hooks/permission-relay.js. Must cover every tool in its
+// RELAYED_TOOLS (shell tools) plus the read tools that taint a run - test/smoke.js
+// asserts the two agree.
+const RELAY_MATCHER = 'Bash|PowerShell|WebFetch|WebSearch|Read|mcp__.*';
+
 // ---------------------------------------------------------------------------
 // Argument parsing. Deliberately tiny: --key value, --flag, and positionals.
 
@@ -313,8 +318,10 @@ async function cmdHookConfig(argv) {
           // MUST name every tool that can run a shell, not just Bash. A CLI
           // that also ships a PowerShell tool lets a run walk around a
           // Bash-only matcher entirely, and under a loosened permission mode
-          // "unrelayed" means "runs, unprompted".
-          matcher: 'Bash|PowerShell',
+          // "unrelayed" means "runs, unprompted". The read tools are here too
+          // (WebFetch, WebSearch, Read, MCP): reading untrusted content is
+          // what arms the relay's tainted-egress rule for the rest of the run.
+          matcher: RELAY_MATCHER,
           hooks: [{ type: 'command', command: `node "${relayHook}"` }],
         },
         {
@@ -521,4 +528,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgv, whichSync, cliOverrides, cmdAsk };
+module.exports = { parseArgv, whichSync, cliOverrides, cmdAsk, RELAY_MATCHER };
