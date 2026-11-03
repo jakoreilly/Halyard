@@ -195,13 +195,16 @@
     font-weight: 550; box-shadow: var(--lift);
   }
   .rail button:active { transform: translateY(1px); }
+  /* Outlined, not filled: a tag is a label on the surface, not a button
+     lying on it. The one exception is "ask", which is filled because it is
+     the only badge that means a run is blocked on the reader. */
   .rail .badge {
     font-family: var(--mono-face); font-size: 10.5px; line-height: 1;
     padding: 3px 5px; border-radius: var(--r-sm);
-    background: var(--panel-2); color: var(--sub); border: 1px solid var(--line);
+    background: transparent; color: var(--sub); border: 1px solid var(--hair);
   }
-  .rail .badge.live { background: transparent; color: var(--watch); border-color: currentColor; }
-  .rail .badge.ask { background: transparent; color: var(--poor); border-color: currentColor; }
+  .rail .badge.live { color: var(--accent); border-color: currentColor; }
+  .rail .badge.ask { background: var(--watch); color: var(--bg); border-color: var(--watch); font-weight: 600; }
 
   /* --- sections are rules and space, not boxes ------------------------ */
   section { margin: 0 0 var(--s-5); }
@@ -261,7 +264,16 @@
     button.danger:not(:disabled):hover { background: var(--panel-2); border-color: var(--poor); }
   }
   textarea { width: 100%; resize: vertical; min-height: 84px; line-height: 1.45; }
-  select { padding-right: 24px; }
+  /* The native widget draws an OS arrow that ignores the theme. Two token-
+     coloured triangles make a caret that follows light, dark and print. */
+  select {
+    padding-right: 26px; -webkit-appearance: none; appearance: none;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--sub) 50%),
+      linear-gradient(135deg, var(--sub) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+    background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+  }
   a { color: var(--accent); text-underline-offset: 2px; }
 
   /* --- discrete objects get a fill; nothing else does ----------------- */
@@ -273,8 +285,20 @@
      not survive - a mono printout, or a reader who cannot separate the
      hues. */
   .card.tone { border-left: 3px solid var(--unknown); }
-  .card.tone.ask { border-left-color: var(--poor); }
-  .card.tone.run { border-left-color: var(--watch); }
+  .card.tone.ask { border-left-color: var(--watch); }
+  .card.tone.run { border-left-color: var(--accent); }
+  /* Amber means "waiting on a human", and nothing else on the page uses it
+     for a block this size. A pending approval is framed all the way round
+     so it cannot be mistaken for the ordinary cards around it. */
+  #ask .card.tone.ask {
+    padding: var(--s-4); border-color: var(--watch); border-left-width: 3px;
+    background: var(--panel-2);
+    background: color-mix(in srgb, var(--watch) 8%, var(--panel-2));
+  }
+  #ask-q { font-size: 17px; line-height: 1.4; letter-spacing: -.01em; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #ask .cmd { color: var(--ink); }
+  #ask .cmd:not(.hidden)::before { content: "> "; color: var(--sub); }
+  .opt { flex: 1 1 0; min-height: 44px; font-weight: 550; }
   .card.tone.fail { border-left-color: var(--poor); }
 
   /* --- run -------------------------------------------------------------
@@ -282,7 +306,7 @@
      moving" in the reader's peripheral vision without asking to be
      looked at, and it stops dead under prefers-reduced-motion. */
   .ticker { height: 2px; background: var(--panel-3); border-radius: 999px; overflow: hidden; margin: var(--s-2) 0; }
-  .ticker > i { display: block; height: 100%; width: 35%; background: var(--watch); animation: slide 1.6s var(--ease) infinite; }
+  .ticker > i { display: block; height: 100%; width: 35%; background: var(--accent); animation: slide 1.6s var(--ease) infinite; }
   @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
   #run-activity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #run-draft { white-space: pre-wrap; margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--line); color: var(--ink-2); max-height: 38vh; overflow: auto; }
@@ -293,12 +317,20 @@
   #ask .cmd { background: var(--bg); border: 1px solid var(--line); padding: var(--s-2); border-radius: var(--r-md); overflow-x: auto; white-space: pre; margin: var(--s-2) 0; }
 
   /* --- replies -------------------------------------------------------- */
-  .reply { border-top: 1px solid var(--rule); padding: var(--s-3) var(--s-2); margin: 0 calc(var(--s-2) * -1); border-left: 2px solid transparent; }
+  .reply { display: flex; flex-direction: column; border-top: 1px solid var(--rule); padding: var(--s-3) var(--s-2); margin: 0 calc(var(--s-2) * -1); border-left: 2px solid transparent; }
   .reply:first-child { border-top: 0; }
   .reply .meta { display: flex; gap: var(--s-2); align-items: center; font: 400 11.5px/1.4 var(--mono-face); color: var(--sub); margin-bottom: 6px; flex-wrap: wrap; }
   .reply .text { white-space: pre-wrap; overflow-wrap: anywhere; }
   .reply .text code { background: var(--panel-2); padding: .1em .35em; border-radius: var(--r-sm); font-family: var(--mono-face); font-size: .92em; }
-  .reply .prompt { color: var(--sub); border-left: 2px solid var(--line); padding-left: var(--s-2); margin-bottom: var(--s-2); }
+  /* What was sent reads as the reader's own turn: a bubble at the top and
+     on the right, with the answer below it on the left. */
+  .reply .prompt {
+    order: -1; align-self: flex-end; max-width: 85%;
+    margin-bottom: var(--s-2); padding: var(--s-2) var(--s-3);
+    background: var(--panel-3); border: 1px solid var(--line); color: var(--ink-2);
+    border-radius: var(--r-lg) var(--r-lg) 2px var(--r-lg);
+    overflow-wrap: anywhere;
+  }
   .reply .acts { display: flex; gap: 6px; margin-top: var(--s-2); flex-wrap: wrap; }
   .reply .acts .destructive { margin-left: auto; }
   .reply.internal .text { color: var(--sub); }
@@ -342,6 +374,49 @@
     background: var(--panel-2); border-color: var(--hair); color: var(--ink); font-weight: 550;
     box-shadow: var(--lift);
   }
+
+  /* A pending approval mirrored above the input, so Approve / Deny is one
+     tap from any view. Hidden on Now, where the full card is already on
+     screen. */
+  .dock-ask {
+    max-width: 780px; margin: 0 auto var(--s-2); padding: var(--s-2) var(--s-3);
+    border: 1px solid var(--watch); border-radius: var(--r-lg);
+    background: var(--bg);
+    background: color-mix(in srgb, var(--watch) 9%, var(--bg));
+  }
+  .dock-ask .q {
+    font-size: 13.5px; line-height: 1.35; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .dock-ask .cmd {
+    margin-top: var(--s-1); font: 12px/1.35 var(--mono-face); color: var(--ink-2);
+    max-height: 2.7em; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .dock-ask .cmd::before { content: "> "; color: var(--sub); }
+  .dock-ask .opts { display: flex; gap: var(--s-2); margin-top: var(--s-2); }
+  /* Beats .compose button.primary (flex: none; height: 42px), which would
+     otherwise leave Approve narrower than Deny. */
+  .compose .dock-ask .opts .opt { flex: 1 1 0; height: auto; min-height: 44px; padding: 0 var(--s-3); }
+
+  /* Send options (engine, model, when) live behind one square button, so
+     the fixed bar costs one row on a phone instead of two. The dot says
+     something other than the defaults is selected. */
+  .compose .opts-btn {
+    position: relative; height: 42px; width: 42px; padding: 0; flex: none;
+    display: inline-flex; align-items: center; justify-content: center; color: var(--sub);
+  }
+  .compose .opts-btn[aria-expanded="true"] { background: var(--panel-3); color: var(--ink); }
+  .compose .opts-btn.set::after {
+    content: ""; position: absolute; top: 6px; right: 6px;
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 2px var(--bg);
+  }
+
+  /* A row that scrolls sideways says so: the edge it continues past fades.
+     JS sets data-more to l, r or lr only while there is more to see. */
+  [data-more="r"]  { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  [data-more="l"]  { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
+  [data-more="lr"] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 
   /* --- misc ------------------------------------------------------------ */
   .warn { color: var(--watch); }
@@ -408,7 +483,7 @@
       --c-5: #5a3f8f; --c-6: #125f79; --c-7: #8c3367; --c-8: #4f621b;
     }
     body { padding: 0; max-width: none; }
-    .topbar, .compose, .rail, .acts, #run-steer-row { display: none !important; }
+    .topbar, .compose, .rail, .acts, #run-steer-row, .dock-ask { display: none !important; }
     /* Every view prints; the switcher is a screen affordance only. */
     .view { display: block !important; }
     .view::before { content: attr(data-title); display: block; font: 400 11px var(--mono-face); color: #555; margin: 18px 0 6px; }
@@ -673,12 +748,20 @@
      the page and must never be more than one tap away, whatever is on
      screen. -->
 <div class="compose">
+  <div class="dock-ask hidden" id="dock-ask" role="alert">
+    <div class="q" id="dock-ask-q"></div>
+    <div class="cmd hidden" id="dock-ask-cmd"></div>
+    <div class="opts" id="dock-ask-opts"></div>
+  </div>
   <div class="snips" id="snips"></div>
   <div class="inner">
     <textarea id="msg" placeholder="Message the agent" enterkeyhint="send" aria-label="Message"></textarea>
+    <button class="ghost opts-btn" id="opts-btn" aria-expanded="false" aria-controls="opts-row" aria-label="Send options">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+    </button>
     <button class="primary" id="send">Send</button>
   </div>
-  <div class="inner" style="margin-top:6px;gap:6px">
+  <div class="inner hidden" id="opts-row" style="margin-top:6px;gap:6px">
     <select id="engine" class="grow" aria-label="Engine"></select>
     <select id="model" class="grow" aria-label="Model"></select>
     <select id="when" class="grow" aria-label="When to run">
@@ -774,6 +857,34 @@
     // Nothing in CSS can read it, so it is read here and written back.
     var c = document.querySelector('.compose').getBoundingClientRect().height;
     if (c > 0) root.setProperty('--compose-h', Math.round(c) + 'px');
+    refreshCues();
+  }
+
+  // A row that scrolls sideways fades the edge it continues past. data-more
+  // is l, r or lr, and absent when everything fits.
+  var cues = [];
+  function scrollCue(el) {
+    if (!el) return;
+    var f = function () {
+      var l = el.scrollLeft > 2, r = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+      if (l || r) el.setAttribute('data-more', (l ? 'l' : '') + (r ? 'r' : ''));
+      else el.removeAttribute('data-more');
+    };
+    el.addEventListener('scroll', f, { passive: true });
+    cues.push(f); f();
+  }
+  function refreshCues() { cues.forEach(function (f) { f(); }); }
+
+  // Engine, model and schedule sit behind one button. The dot on it says
+  // the selection is not the default, so a collapsed row cannot hide the
+  // fact that this message will go to a non-default model or run later.
+  function syncOpts() {
+    var e = $('engine'), m = $('model'), w = $('when');
+    var parts = [e, m, w].map(function (s) { var o = s.options[s.selectedIndex]; return o ? o.textContent : ''; }).filter(Boolean);
+    var b = $('opts-btn');
+    b.classList.toggle('set', e.selectedIndex > 0 || m.value !== '' || w.value !== '');
+    b.title = 'Send options: ' + parts.join(', ');
+    b.setAttribute('aria-label', b.title);
   }
   window.addEventListener('resize', measureBar);
   window.addEventListener('orientationchange', measureBar);
@@ -794,6 +905,7 @@
       panel.classList.toggle('hidden', !on);
     });
     if (focus) $('tab-' + v).focus();
+    syncDockAsk();
     if (v === 'work') { loadSpend(); pollArtifacts(); pollScheduled(); }
     measureBar();
   }
@@ -1070,6 +1182,61 @@
   var pendingAsk = false;
   var BASE_TITLE = 'Halyard';
 
+  // The same options, built into whichever host asks: the full card on Now,
+  // or the strip above the input everywhere else. A free-text question has
+  // no buttons to mirror, so the strip only points at the card.
+  function fillAskOpts(s, host, compact) {
+    host.innerHTML = '';
+    // Empty options is how a free-text question (halyard ask with no
+    // --options) is told apart from an approve/deny-shaped one. Falling
+    // through to a button default here would send the literal word "Approve"
+    // back as the answer to "which of these did you mean?", and the run would
+    // act on it.
+    if (!s.options.length) {
+      if (compact) {
+        var open = document.createElement('button');
+        open.className = 'primary opt'; open.textContent = 'Answer on Now';
+        open.onclick = function () { setView('now'); var i = $('ask-opts').querySelector('input'); if (i) i.focus(); };
+        host.appendChild(open);
+        return;
+      }
+      var input = document.createElement('input');
+      input.className = 'grow'; input.placeholder = 'Type your answer';
+      var go = document.createElement('button');
+      go.className = 'primary'; go.textContent = 'Answer';
+      var submit = function () {
+        var text = input.value.trim();
+        if (!text) return;
+        go.disabled = input.disabled = true;
+        post('/api/answer', { id: s.id, answer: text }).then(pollState).catch(function (e) { alert(e.message); go.disabled = input.disabled = false; });
+      };
+      go.onclick = submit;
+      input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
+      host.appendChild(input);
+      host.appendChild(go);
+      return;
+    }
+    s.options.forEach(function (opt) {
+      var b = document.createElement('button');
+      b.textContent = opt;
+      b.className = 'opt ' + (/approve|allow|yes/i.test(opt) ? 'primary' : 'danger');
+      b.onclick = function () {
+        b.disabled = true;
+        post('/api/answer', { id: s.id, answer: opt }).then(pollState).catch(function (e) { alert(e.message); b.disabled = false; });
+      };
+      host.appendChild(b);
+    });
+  }
+
+  var dockAskShown = false;
+  function syncDockAsk() {
+    var show = !!pendingAsk && view !== 'now';
+    if (show === dockAskShown) return;
+    dockAskShown = show;
+    $('dock-ask').classList.toggle('hidden', !show);
+    measureBar();
+  }
+
   function renderState(s) {
     var pending = s && s.status === 'pending';
     $('ask').classList.toggle('hidden', !pending);
@@ -1083,6 +1250,7 @@
         if (LS.get('vibrate', true) && navigator.vibrate) { try { navigator.vibrate([40, 60, 40]); } catch (e) {} }
       }
     }
+    syncDockAsk();
     if (!pending) { lastRenderedAskId = null; return; }
     // The interval poll re-fires with the SAME still-pending question every
     // few seconds. Rebuilding the card unconditionally is harmless for
@@ -1096,39 +1264,11 @@
     $('ask-q').textContent = s.question;
     $('ask-cmd').textContent = s.command;
     $('ask-cmd').classList.toggle('hidden', !s.command);
-    $('ask-opts').innerHTML = '';
-    // Empty options is how a free-text question (halyard ask with no
-    // --options) is told apart from an approve/deny-shaped one. Falling
-    // through to a button default here would send the literal word "Approve"
-    // back as the answer to "which of these did you mean?", and the run would
-    // act on it.
-    if (!s.options.length) {
-      var input = document.createElement('input');
-      input.className = 'grow'; input.placeholder = 'Type your answer';
-      var go = document.createElement('button');
-      go.className = 'primary'; go.textContent = 'Answer';
-      var submit = function () {
-        var text = input.value.trim();
-        if (!text) return;
-        go.disabled = input.disabled = true;
-        post('/api/answer', { id: s.id, answer: text }).then(pollState).catch(function (e) { alert(e.message); go.disabled = input.disabled = false; });
-      };
-      go.onclick = submit;
-      input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
-      $('ask-opts').appendChild(input);
-      $('ask-opts').appendChild(go);
-      return;
-    }
-    s.options.forEach(function (opt) {
-      var b = document.createElement('button');
-      b.textContent = opt;
-      b.className = /approve|allow|yes/i.test(opt) ? 'primary' : 'danger';
-      b.onclick = function () {
-        b.disabled = true;
-        post('/api/answer', { id: s.id, answer: opt }).then(pollState).catch(function (e) { alert(e.message); });
-      };
-      $('ask-opts').appendChild(b);
-    });
+    fillAskOpts(s, $('ask-opts'), false);
+    $('dock-ask-q').textContent = s.question;
+    $('dock-ask-cmd').textContent = s.command;
+    $('dock-ask-cmd').classList.toggle('hidden', !s.command);
+    fillAskOpts(s, $('dock-ask-opts'), true);
   }
 
   // ---------------------------------------------------------------------
@@ -1288,6 +1428,7 @@
   function renderReplies(items) {
     allReplies = items;
     renderThreadFilter(items);
+    refreshCues();
     var shown = threadFilter ? items.filter(function (n) { return n.thread === threadFilter; }) : items;
     setBadge('replies', shown.length ? String(shown.length) : '');
 
@@ -1559,6 +1700,7 @@
         $('when-at').value = localInputValue(d);
       }
     }
+    syncOpts();
     measureBar();
   }
 
@@ -1727,6 +1869,7 @@
       }).join('');
       fillModels();
     }
+    syncOpts();
   }
   function fillModels() {
     if (!health) return;
@@ -1736,6 +1879,7 @@
       ((e && e.models) || []).map(function (m) {
         return '<option value="' + esc(m) + '"' + (m === pref ? ' selected' : '') + '>' + (m === 'auto' ? 'Auto (light first, hands up)' : esc(m)) + '</option>';
       }).join('');
+    syncOpts();
   }
 
   // ---------------------------------------------------------------------
@@ -1788,7 +1932,12 @@
   });
   $('outbox-btn').onclick = function () { flushOutbox(); };
   $('engine').onchange = function () { LS.set('engine', this.value); fillModels(); };
-  $('model').onchange = function () { LS.set('model', this.value); };
+  $('model').onchange = function () { LS.set('model', this.value); syncOpts(); };
+  $('opts-btn').onclick = function () {
+    var open = $('opts-row').classList.toggle('hidden') === false;
+    this.setAttribute('aria-expanded', open ? 'true' : 'false');
+    measureBar();
+  };
   $('when').onchange = syncWhen;
   $('when-at').onchange = measureBar;
   $('when-at-clear').onclick = function () {
@@ -2010,6 +2159,8 @@
   // Kick off
   $('thread').innerHTML = '<option>' + esc(LS.get('thread', 'main')) + '</option>';
   $('msg').value = LS.get('draft', '');
+  [document.querySelector('.rail'), $('snips'), $('thread-filter')].forEach(scrollCue);
+  if (window.ResizeObserver) new ResizeObserver(measureBar).observe(document.querySelector('.compose'));
   setView(view);
   measureBar();
   renderSnips();
