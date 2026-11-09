@@ -335,6 +335,23 @@
   .reply .acts .destructive { margin-left: auto; }
   .reply.internal .text { color: var(--sub); }
   .reply.pinned { border-left-color: var(--hair); }
+  /* Collapsed by default, so a pile of pins is one row and never pushes the
+     latest reply down the page. The heading is the toggle; the preview is the
+     newest pin's first line. */
+  #pinned-head {
+    all: unset; box-sizing: border-box; width: 100%; min-height: 44px; cursor: pointer;
+    display: flex; align-items: center; gap: var(--s-2);
+  }
+  #pinned-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  #pinned-head .chev { margin-left: auto; transition: transform 180ms ease; }
+  #pinned-head[aria-expanded='true'] .chev { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) { #pinned-head .chev { transition: none; } }
+  #pinned-preview {
+    font-size: 13.5px; color: var(--ink-2); cursor: pointer; min-height: 44px;
+    display: flex; align-items: center; padding: 0 var(--s-2);
+    border-left: 2px solid var(--hair); overflow: hidden;
+  }
+  #pinned-preview span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   @media (hover: hover) and (pointer: fine) {
     /* An edge as well as a fill: on a long list the fill alone is easy to
        lose when the pointer is out at the right-hand edge. */
@@ -601,8 +618,9 @@
   </section>
 
   <section id="pinned-box" class="hidden">
-    <h2>pinned</h2>
-    <div id="pinned"></div>
+    <h2><button type="button" id="pinned-head" aria-expanded="false" aria-controls="pinned">pinned <span id="pinned-count"></span><span class="chev" aria-hidden="true">▸</span></button></h2>
+    <div id="pinned-preview" title="Newest pin - tap to show all"><span></span></div>
+    <div id="pinned" class="hidden"></div>
   </section>
 
   <section id="latest-box" class="hidden">
@@ -1288,6 +1306,8 @@
     LS.set('pinned', list);
     renderPinned();
   }
+  // Newest first (pinToggle prepends), shown as one row until opened, so a
+  // pile of pins never pushes the latest reply down the page.
   function renderPinned() {
     var list = pinnedList();
     $('pinned-box').classList.toggle('hidden', !list.length);
@@ -1296,7 +1316,26 @@
     list.forEach(function (n) {
       box.appendChild(replyEl(n, { pinnedOnly: true }));
     });
+    if (!list.length) return;
+    $('pinned-count').textContent = '\u00b7 ' + list.length;
+    var first = String(list[0].message || '').replace(/[#*_`>]/g, '').split('\n')
+      .map(function (l) { return l.trim(); }).filter(Boolean)[0] || '';
+    $('pinned-preview').firstChild.textContent = first;
+    paintPinnedOpen();
   }
+  // Open or shut is this phone's choice and survives a reload; shut is the default.
+  function paintPinnedOpen() {
+    var open = !!LS.get('pinnedOpen', false);
+    $('pinned-head').setAttribute('aria-expanded', String(open));
+    $('pinned').classList.toggle('hidden', !open);
+    $('pinned-preview').classList.toggle('hidden', open);
+  }
+  function togglePinnedOpen() {
+    LS.set('pinnedOpen', !LS.get('pinnedOpen', false));
+    paintPinnedOpen();
+  }
+  $('pinned-head').addEventListener('click', togglePinnedOpen);
+  $('pinned-preview').addEventListener('click', togglePinnedOpen);
 
   // One builder for every reply-shaped thing on the page: the archive list,
   // the pinned snapshots and the "latest reply" summary on Now. Three copies
