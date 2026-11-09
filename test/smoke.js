@@ -472,6 +472,12 @@ check('sw.js: nothing token-gated may be precached, and install cannot fail', ()
   // /api/ask was actually given (a free-text `halyard ask` sends none at all).
   assert.ok(!/action:\s*['"]approve['"]/.test(sw), 'action buttons must be built from payload.actions, not hardcoded');
   assert.ok(sw.includes('opt${i}'), 'action ids must be derived from the real option list, not hardcoded ones');
+  // Android (HyperOS Chrome, at least) hands every action button the LAST
+  // action's id, so a second button turned an Approve tap into a Deny.
+  assert.ok(/payload\.actions\.filter\(Boolean\)\.slice\(0, 1\)/.test(sw), 'an ask notification must offer one button, never two');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const required = /REQUIRED_SW_VERSION = (\d+)/.exec(page);
+  assert.ok(required && Number(required[1]) === Number(/SW_VERSION = (\d+)/.exec(sw)[1]), 'SW_VERSION and the page REQUIRED_SW_VERSION must be bumped together');
   // Answering an `ask` must go to /api/answer, never /api/inbox - the latter
   // would silently start an unrelated new conversation turn.
   assert.ok(/data\.kind === ['"]ask['"]/.test(sw), "a free-text reply to an ask must be told apart from an ordinary reply notification");

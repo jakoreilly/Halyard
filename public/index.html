@@ -2066,7 +2066,7 @@
   // an old worker has no message handler and does not reply at all, so "no
   // answer" and "old worker" look identical from here - a non-answer is never
   // read as "no worker registered".
-  var REQUIRED_SW_VERSION = 3;
+  var REQUIRED_SW_VERSION = 4;
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').then(function (reg) {
       setTimeout(function () {
