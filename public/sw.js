@@ -20,7 +20,7 @@
 //      individually with its own catch.
 //   3. SW_VERSION and the page's REQUIRED_SW_VERSION are bumped together.
 
-const SW_VERSION = 3;
+const SW_VERSION = 4;
 const CACHE = `halyard-shell-v${SW_VERSION}`;
 
 // Token-free URLs only. /manifest.json bakes the token into start_url and is
@@ -98,12 +98,19 @@ self.addEventListener('push', (event) => {
   // sent for exactly this purpose never reached notificationclick, and every
   // tap with no tab open landed on the 401 page.
   //
-  // Built from the REAL options the caller gave `/api/ask` (up to 2 shown as
-  // buttons - most platforms cap notification actions there), never a
-  // hardcoded Approve/Deny. A free-text question passes an empty options array
-  // on purpose (see `halyard ask`), which is what falls through to the text
-  // box below rather than showing buttons that do not apply to it.
-  const askOptions = Array.isArray(payload.actions) ? payload.actions.filter(Boolean).slice(0, 2) : [];
+  // Built from the REAL options the caller gave `/api/ask`, never a hardcoded
+  // Approve/Deny. A free-text question passes an empty options array on purpose
+  // (see `halyard ask`), which is what falls through to the text box below
+  // rather than showing buttons that do not apply to it.
+  //
+  // ONE button, never two. On a POCO phone (HyperOS, Chrome) every action button
+  // delivered the LAST action's id: tapping Approve sent "Deny", and tapping the
+  // left of two test options sent the right one (reproduced three times on the
+  // phone bridge Halyard grew from). A single button has nothing to collide with.
+  // The other options - Deny included - are in the page a body tap opens, and an
+  // approval left unanswered still denies on the relay's timeout. Don't go back
+  // to two buttons without re-testing on a real Android phone.
+  const askOptions = Array.isArray(payload.actions) ? payload.actions.filter(Boolean).slice(0, 1) : [];
   const actions = payload.kind === 'ask' && askOptions.length
     ? askOptions.map((label, i) => ({ action: `opt${i}`, title: String(label) }))
     : [{ action: 'reply', title: 'Reply', type: 'text', placeholder: 'Reply…' }];
