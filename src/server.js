@@ -73,6 +73,13 @@ async function readJson(req, maxBytes = 1024 * 1024) {
   }
 }
 
+function isRemoteRequest(req) {
+  const h = req.headers || {};
+  if (h['x-forwarded-for'] || h.forwarded || h['tailscale-user-login'] || h['cf-connecting-ip']) return true;
+  const a = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
+  return !!a && a !== '127.0.0.1' && a !== '::1';
+}
+
 function newId() {
   return crypto.randomBytes(9).toString('base64url');
 }
@@ -202,6 +209,9 @@ function createServer(ctx) {
     // it describes a queued item and nothing else: once that item is popped or
     // deleted, holdView() drops it, so there is no separate "clear" to forget.
     usageHold: null,
+    // When a device other than this computer first opened the page with the
+    // token - which is what "the phone is paired" means to setup and doctor.
+    pairedAt: null,
   };
   const MAX_MISSED_TAPS = 10;
 
@@ -213,6 +223,7 @@ function createServer(ctx) {
       if (raw.lastFailed) state.lastFailed = raw.lastFailed;
       if (Array.isArray(raw.recentClients)) state.recentClients = raw.recentClients;
       if (Array.isArray(raw.missedTaps)) state.missedTaps = raw.missedTaps.slice(-MAX_MISSED_TAPS);
+      if (Number.isFinite(raw.pairedAt)) state.pairedAt = raw.pairedAt;
       log.info(`restored ${state.inbox.length} queued, ${state.notifications.length} replies`);
     } catch (e) {
       // A corrupt state file is logged and skipped, never fatal. An unreachable
@@ -234,6 +245,7 @@ function createServer(ctx) {
         lastFailed: state.lastFailed,
         recentClients: state.recentClients,
         missedTaps: state.missedTaps,
+        pairedAt: state.pairedAt,
       }));
     } catch (e) {
       log.error(`could not persist state: ${e.message}`);
@@ -1110,6 +1122,8 @@ function createServer(ctx) {
       missedTaps: state.missedTaps.map((m) => ({ id: m.id, command: clampStr(m.command, 300), cwd: m.cwd, question: m.question, missedAt: m.missedAt })),
       usageHold: holdView(),
       usageGuard: { maxPercent: Number((cfg.usageGuard && cfg.usageGuard.maxPercent) || 0) },
+      paired: !!state.pairedAt,
+      pairedAt: state.pairedAt,
       defaultEngine: cfg.defaultEngine,
       workspace: cfg.workspace,
       permissionMode: cfg.permissionMode,
@@ -1369,6 +1383,13 @@ function createServer(ctx) {
     // start_url survive without carrying it in every href. HttpOnly because no
     // script needs to read it - the page takes its token from its own URL -
     // and an artifact is agent-written HTML served on this same origin.
+    // A tokened request that came through a tunnel (a forwarding header) or
+    // from another address is a second device - the phone - having opened it.
+    if (!state.pairedAt && isRemoteRequest(req)) {
+      state.pairedAt = Date.now();
+      saveState();
+    }
+
     if (url.searchParams.get('token')) {
       res.setHeader('set-cookie', `halyard_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''}`);
     }

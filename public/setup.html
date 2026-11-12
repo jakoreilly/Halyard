@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Set up Halyard</title>
+<style>
+  :root {
+    --bg: #fbfbf9; --panel: #ffffff; --ink: #1d1d1b; --sub: #5f5f5a; --line: #e3e2dc;
+    --good: #1f7a4d; --good-bg: #e6f3ec; --todo: #a35a00; --todo-bg: #fbf0e1; --accent: #1d1d1b;
+    --r: 12px; --s: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111211; --panel: #1a1b1a; --ink: #ecebe6; --sub: #a3a29c; --line: #2c2d2b;
+      --good: #6fd29e; --good-bg: #16291f; --todo: #f0b061; --todo-bg: #2c2214; --accent: #ecebe6; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .lede { color: var(--sub); margin: 0 0 24px; }
+  ol.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: var(--s); display: grid; grid-template-columns: 36px 1fr; gap: 12px; }
+  .tick { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 18px; }
+  .ok .tick { background: var(--good-bg); color: var(--good); }
+  .todo .tick { background: var(--todo-bg); color: var(--todo); }
+  .label { font-weight: 600; }
+  .detail { color: var(--sub); font-size: 14px; word-break: break-word; }
+  .fix { margin-top: 6px; font-size: 15px; }
+  .actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, a.button { font: inherit; font-size: 15px; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; text-decoration: none; }
+  button.primary, a.button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; overflow: auto; font-size: 12.5px; max-height: 18rem; }
+  .add { color: var(--good); } .del { color: var(--todo); }
+  .qr { display: grid; justify-items: start; gap: 8px; margin-top: 10px; }
+  .qr img { width: 240px; height: 240px; background: #fff; border-radius: 8px; padding: 6px; }
+  .note { font-size: 14px; color: var(--sub); }
+  .msg { font-size: 14px; margin-top: 6px; }
+  .done-bar { margin-top: 28px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .summary { font-weight: 600; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Set up Halyard</h1>
+  <p class="lede">Halyard lets you message the AI assistant on this computer from your phone. Work down the list - each step gets a green tick when it is done. Nothing changes on your computer until you press a button.</p>
+
+  <ol class="steps" id="steps" aria-live="polite"></ol>
+
+  <div class="done-bar">
+    <span class="summary" id="summary"></span>
+    <button id="refresh">Check again</button>
+    <button class="primary" id="done">Finish</button>
+  </div>
+  <p class="note">You can close this page at any time and run <code>halyard setup</code> again later. <code>halyard doctor</code> re-checks everything from the terminal.</p>
+</main>
+<script>
+(function () {
+  var KEY = new URLSearchParams(location.search).get('key') || '';
+  function api(path, opts) {
+    return fetch(path + (path.indexOf('?') === -1 ? '?' : '&') + 'key=' + encodeURIComponent(KEY), opts || {})
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); });
+  }
+  function post(path) { return api(path, { method: 'POST' }); }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+
+  var hookDiffShown = false;
+
+  function action(box, label, primary, fn) {
+    var b = el('button', primary ? 'primary' : '', label);
+    var msg = el('div', 'msg');
+    b.onclick = function () {
+      b.disabled = true; msg.textContent = 'Working…';
+      Promise.resolve(fn(msg)).then(function (text) { msg.textContent = text || 'Done.'; load(); })
+        .catch(function (e) { msg.textContent = e.message; b.disabled = false; });
+    };
+    box.appendChild(b);
+    return msg;
+  }
+
+  function render(s) {
+    var list = document.getElementById('steps');
+    list.innerHTML = '';
+    var todo = 0;
+    s.checks.forEach(function (c) {
+      if (!c.ok) todo++;
+      var li = el('li', 'step ' + (c.ok ? 'ok' : 'todo'));
+      li.appendChild(el('div', 'tick', c.ok ? '✓' : String(s.checks.indexOf(c) + 1)));
+      li.querySelector('.tick').setAttribute('aria-label', c.ok ? 'done' : 'to do');
+      var body = el('div');
+      body.appendChild(el('div', 'label', c.label));
+      if (c.detail) body.appendChild(el('div', 'detail', c.detail));
+      if (!c.ok && c.fix) body.appendChild(el('div', 'fix', c.fix));
+      var acts = el('div', 'actions');
+      var msgs = [];
+
+      if (c.id === 'hooks' && !c.ok) {
+        msgs.push(action(acts, 'Show what will change', false, function (m) {
+          return api('/api/hooks/preview').then(function (p) {
+            if (!p.ok) throw new Error(p.error);
+            var pre = el('pre');
+            (p.diff || '(no changes needed)').split('\n').forEach(function (line) {
+              var span = el('span', line[0] === '+' ? 'add' : (line[0] === '-' ? 'del' : ''), line + '\n');
+              pre.appendChild(span);
+            });
+            body.appendChild(el('div', 'detail', 'File: ' + p.target + ' (a backup is made first)'));
+            body.appendChild(pre);
+            hookDiffShown = true;
+            return 'Lines starting with + are added. Your own settings are kept.';
+          });
+        }));
+        msgs.push(action(acts, 'Wire it up', true, function () {
+          return post('/api/hooks/apply').then(function (r) { return r.backup ? 'Done. Your old settings were saved to ' + r.backup : 'Done.'; });
+        }));
+      }
+      if (c.id === 'tunnel' && !c.ok) {
+        if (s.tailscale.installed && s.tailscale.running) {
+          msgs.push(action(acts, 'Turn on the tunnel', true, function () {
+            return post('/api/tailscale/serve').then(function (r) { return 'Done. Your phone link is now ' + r.url + '. To undo later: ' + r.undo; });
+          }));
+        } else {
+          var a = el('a', 'button primary', s.tailscale.installed ? 'Open Tailscale and sign in' : 'Get Tailscale');
+          a.href = s.tailscale.download; a.target = '_blank'; a.rel = 'noopener';
+          acts.appendChild(a);
+          body.appendChild(el('div', 'note', 'Install it on this computer and on your phone, signed in with the same account. Then press Check again. (Cloudflare Tunnel also works - see docs/REMOTE-ACCESS.md.)'));
+        }
+      }
+      if (c.id === 'phone') {
+        if (!s.running) {
+          msgs.push(action(acts, 'Start Halyard now', true, function () { return post('/api/start').then(function () { return 'Started.'; }); }));
+        }
+        var q = el('div', 'qr');
+        var img = el('img'); img.alt = 'QR code for your private Halyard link';
+        img.src = '/api/qr.svg?key=' + encodeURIComponent(KEY) + '&t=' + Date.now();
+        q.appendChild(img);
+        q.appendChild(el('div', 'note', 'Point your phone camera at this. The link is private - it works like a password, so do not share a screenshot of it.'));
+        if (/^http:\/\/127\./.test(s.pairingUrl)) q.appendChild(el('div', 'fix', 'This link only works on this computer until the tunnel step is done.'));
+        body.appendChild(q);
+      }
+      if (acts.childNodes.length) body.appendChild(acts);
+      msgs.forEach(function (m) { body.appendChild(m); });
+      li.appendChild(body);
+      list.appendChild(li);
+    });
+
+    // Start on login: one yes, not a required step.
+    var li = el('li', 'step ' + (s.service ? 'ok' : 'todo'));
+    li.appendChild(el('div', 'tick', s.service ? '✓' : '+'));
+    var body = el('div');
+    body.appendChild(el('div', 'label', 'Start Halyard by itself when you log in (optional)'));
+    body.appendChild(el('div', 'detail', s.service ? 'It is set to start on login.' : 'Otherwise you need to run halyard start yourself after a restart.'));
+    if (!s.service) {
+      var acts = el('div', 'actions');
+      var m = action(acts, 'Yes, start on login', true, function () {
+        return post('/api/service/install').then(function (r) { return 'Done. To undo: ' + r.undo; });
+      });
+      body.appendChild(acts); body.appendChild(m);
+    }
+    li.appendChild(body);
+    list.appendChild(li);
+
+    document.getElementById('summary').textContent = todo ? todo + ' step' + (todo === 1 ? '' : 's') + ' left' : 'All set - open Halyard on your phone.';
+  }
+
+  function load() { return api('/api/status').then(render).catch(function (e) { document.getElementById('summary').textContent = 'Setup stopped: ' + e.message; }); }
+  document.getElementById('refresh').onclick = load;
+  document.getElementById('done').onclick = function () {
+    post('/api/done').then(function () { document.querySelector('main').innerHTML = '<h1>All done</h1><p class="lede">You can close this tab. Run <code>halyard doctor</code> any time to re-check.</p>'; });
+  };
+  load();
+  setInterval(function () { if (!document.hidden && !hookDiffShown) load(); }, 10000);
+})();
+</script>
+</body>
+</html>

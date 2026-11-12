@@ -254,6 +254,15 @@
   button.danger { color: var(--poor); border-color: var(--line); background: transparent; }
   button:disabled { opacity: .45; cursor: default; }
   button.sm { padding: 5px 9px; font-size: 12.5px; }
+  /* First-run tour: three screens, dismissible, shown once per device. */
+  .tour { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.45); display: grid; place-items: end center; padding: var(--s-4, 16px); }
+  .tour.hidden { display: none; }
+  .tour-card { background: var(--panel, var(--bg)); color: inherit; border: 1px solid var(--line); border-radius: 16px; padding: 20px; width: min(100%, 26rem); box-shadow: 0 10px 40px rgba(0,0,0,.25); margin-bottom: 12vh; }
+  .tour-card h3 { margin: 0 0 6px; font-size: 18px; }
+  .tour-card p { margin: 0 0 14px; color: var(--sub); }
+  .tour-dots { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tour-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+  .tour-dots i.on { background: currentColor; }
   /* A link that has to look like a button (the artifact Save download). */
   a.btn { display: inline-block; text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: var(--r-md); padding: 5px 9px; font-size: 12.5px; }
   /* The live run's model, beside what it is running. */
@@ -759,6 +768,7 @@
       <dt>ctrl + enter</dt><dd>send</dd>
       <dt>esc</dt><dd>leave the field</dd>
     </dl>
+    <button class="ghost sm" id="tour-again" style="margin-top:var(--s-3)">Show the tour again</button>
   </section>
 </main>
 
@@ -799,6 +809,19 @@
   <div class="inner hidden" id="when-at-row" style="margin-top:6px;gap:6px">
     <input type="datetime-local" class="grow" id="when-at" aria-label="Run at">
     <button class="ghost sm" id="when-at-clear">Clear</button>
+  </div>
+</div>
+
+<div class="tour hidden" id="tour" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+  <div class="tour-card">
+    <div class="tour-dots" id="tour-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+    <h3 id="tour-title"></h3>
+    <p id="tour-text"></p>
+    <div class="row">
+      <button class="ghost sm" id="tour-skip">Skip</button>
+      <span class="grow"></span>
+      <button class="primary sm" id="tour-next">Next</button>
+    </div>
   </div>
 </div>
 
@@ -2195,6 +2218,32 @@
     }).catch(function () {});
   }
 
+  // ---------------------------------------------------------------------
+  // First-run tour. Three screens, once per device, dismissible at any point;
+  // System -> "Show the tour again" brings it back.
+  var TOUR = [
+    ['Message your computer', 'Type at the bottom and press Send. The assistant on your computer does the work and its answer appears on Now and under Replies - even if you close this page.'],
+    ['You stay in charge', 'Before anything risky - publishing code, deleting folders, sending data out - your phone asks Approve or Deny. Nothing happens until you tap. Missed one? It waits under "needs your tap".'],
+    ['Keep going later', 'Threads keep separate conversations. Work holds files the assistant made, things scheduled for later, and what it has cost. System shows whether everything is healthy.']
+  ];
+  var tourAt = 0;
+  function showTour(i) {
+    tourAt = i;
+    $('tour-title').textContent = TOUR[i][0];
+    $('tour-text').textContent = TOUR[i][1];
+    var dots = $('tour-dots').children;
+    for (var k = 0; k < dots.length; k++) dots[k].classList.toggle('on', k === i);
+    $('tour-next').textContent = i === TOUR.length - 1 ? 'Got it' : 'Next';
+    $('tour').classList.remove('hidden');
+    $('tour-next').focus();
+  }
+  function endTour() { $('tour').classList.add('hidden'); LS.set('toured', true); }
+  $('tour-next').onclick = function () { if (tourAt < TOUR.length - 1) showTour(tourAt + 1); else endTour(); };
+  $('tour-skip').onclick = endTour;
+  $('tour').addEventListener('keydown', function (e) { if (e.key === 'Escape') endTour(); });
+  window.halyardTour = function () { showTour(0); };
+  $('tour-again').onclick = function () { showTour(0); };
+
   // Kick off
   $('thread').innerHTML = '<option>' + esc(LS.get('thread', 'main')) + '</option>';
   $('msg').value = LS.get('draft', '');
@@ -2207,6 +2256,7 @@
   pollHealth().then(fillEngines);
   pollState(); pollNotifications(); pollContext(); pollArtifacts(); pollScheduled();
   pickUpShare();
+  if (!LS.get('toured', false)) showTour(0);
   renderPinned();
   setupPush();
   retime();

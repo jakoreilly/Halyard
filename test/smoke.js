@@ -29,6 +29,9 @@ const watcher = require('../src/watcher');
 const which = require('../src/which');
 const halyardBin = require('../bin/halyard.js');
 const router = require('../src/router');
+const qr = require('../src/qr');
+const setupmod = require('../src/setup');
+const { createSetupServer } = require('../src/setup-server');
 const prunemod = require('../src/prune');
 const usagemod = require('../src/usage');
 const { createClient } = require('../src/client');
@@ -1362,6 +1365,252 @@ async function main() {
     const out = fn('**Done.** See [the report](/artifacts/r.html?token=abc) and [docs](https://example.com/d).\nOpen https://box.example/secrets?token=abc\n\n---\nEdited 1 file · $0.01 · 3s');
     assert.ok(!/abc|artifacts|secrets|Edited/.test(out), out);
     assert.ok(out.includes('the report') && out.includes('docs (https://example.com/d)') && out.includes('*Done.*'), out);
+  });
+
+  // -------------------------------------------------------------------------
+  // Easy install: QR pairing
+
+  check('qr: Reed-Solomon matches the published 1-M worked example', () => {
+    const data = [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17];
+    assert.deepStrictEqual(qr.rsRemainder(data, qr.rsDivisor(10)), [196, 35, 39, 119, 235, 215, 231, 226, 93, 23]);
+  });
+
+  check('qr: picks the smallest version, draws finders and timing, and encodes format bits validly', () => {
+    const short = qr.encode('hi', { ecl: 'M' });
+    assert.strictEqual(short.version, 1);
+    assert.strictEqual(short.size, 21);
+    const url = qr.encode(`https://host.example/?token=${'A'.repeat(32)}`, { ecl: 'M' });
+    assert.ok(url.version >= 3 && url.version <= 5, `version ${url.version}`);
+    const m = url.modules;
+    const s = url.size;
+    // Three finder patterns: dark 7x7 ring, light ring, dark 3x3 core.
+    for (const [x0, y0] of [[0, 0], [s - 7, 0], [0, s - 7]]) {
+      for (let i = 0; i < 7; i++) {
+        assert.ok(m[y0][x0 + i] && m[y0 + 6][x0 + i] && m[y0 + i][x0] && m[y0 + i][x0 + 6], 'finder ring');
+      }
+      assert.ok(!m[y0 + 1][x0 + 1] && m[y0 + 3][x0 + 3], 'finder light ring and core');
+    }
+    for (let i = 8; i < s - 8; i++) assert.strictEqual(m[6][i], i % 2 === 0, 'timing row');
+    assert.ok(m[s - 8][8], 'the dark module');
+    // The two format copies agree and are a valid BCH codeword.
+    let a = 0;
+    for (let i = 0; i <= 5; i++) a |= (m[i][8] ? 1 : 0) << i;
+    a |= (m[7][8] ? 1 : 0) << 6; a |= (m[8][8] ? 1 : 0) << 7; a |= (m[8][7] ? 1 : 0) << 8;
+    for (let i = 9; i < 15; i++) a |= (m[8][14 - i] ? 1 : 0) << i;
+    let b = 0;
+    for (let i = 0; i < 8; i++) b |= (m[8][s - 1 - i] ? 1 : 0) << i;
+    for (let i = 8; i < 15; i++) b |= (m[s - 15 + i][8] ? 1 : 0) << i;
+    assert.strictEqual(a, b, 'format copies differ');
+    const raw = a ^ 0x5412;
+    let rem = raw >>> 10;
+    for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    assert.strictEqual(((raw >>> 10) << 10) | rem, raw, 'format bits are not a valid BCH codeword');
+    assert.strictEqual((raw >>> 13) & 3, 0, 'level M');
+    assert.strictEqual((raw >>> 10) & 7, url.mask);
+  });
+
+  check('qr: long input grows the version, too-long throws, and both renderers work', () => {
+    assert.ok(qr.encode('x'.repeat(500), { ecl: 'L' }).version > 10);
+    assert.throws(() => qr.encode('x'.repeat(4000), { ecl: 'H' }), /too long/);
+    const code = qr.encode('hello');
+    assert.ok(/^<svg[\s\S]*<\/svg>$/.test(qr.toSvg(code)));
+    const term = qr.toTerminal(code);
+    assert.strictEqual(term.split('\n').length, Math.ceil((code.size + 4) / 2));
+  });
+
+  // -------------------------------------------------------------------------
+  // Easy install: hook wiring
+
+  check('hooks: merge keeps every other hook, replaces a stale Halyard one, and is idempotent', () => {
+    const hooksDir = '/opt/halyard/hooks';
+    const existing = {
+      theme: 'dark',
+      hooks: {
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [{ type: 'command', command: 'node /opt/other/check.js' }] },
+          { matcher: 'Bash', hooks: [{ type: 'command', command: 'node "/old/halyard/hooks/permission-relay.js"' }] },
+        ],
+        PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'echo hi' }] }],
+      },
+    };
+    const { next, changed } = setupmod.mergeHooks(existing, hooksDir);
+    assert.ok(changed);
+    assert.strictEqual(next.theme, 'dark');
+    assert.deepStrictEqual(next.hooks.PostToolUse, existing.hooks.PostToolUse);
+    const cmds = next.hooks.PreToolUse.flatMap((e) => e.hooks.map((h) => h.command));
+    assert.ok(cmds.includes('node /opt/other/check.js'), 'someone else\'s hook survives');
+    assert.ok(!cmds.some((c) => c.includes('/old/halyard/')), 'the stale copy is replaced');
+    assert.strictEqual(cmds.filter((c) => c.includes('permission-relay.js')).length, 1);
+    assert.strictEqual(next.hooks.PreToolUse.find((e) => e.hooks[0].command.includes('permission-relay')).matcher, halyardBin.RELAY_MATCHER);
+    assert.strictEqual(setupmod.mergeHooks(next, hooksDir).changed, false, 'a second merge changes nothing');
+    // A hook that merely shares a file name but is not Halyard's is left alone.
+    assert.ok(!setupmod.isOurHook('node /opt/bridge/hooks/permission-relay.js', hooksDir));
+  });
+
+  check('hooks: install backs up, writes, and refuses a file it cannot read', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-hooks-'));
+    const target = path.join(dir, 'settings.json');
+    fs.writeFileSync(target, JSON.stringify({ model: 'x' }));
+    const p = setupmod.previewHooks(target);
+    assert.ok(p.ok && p.changed && /^\+ /m.test(p.diff), p.diff);
+    assert.ok(!setupmod.hooksWired(target));
+    const r = setupmod.installHooks(target, { now: 0 });
+    assert.ok(r.written && fs.existsSync(r.backup));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(r.backup, 'utf8')), { model: 'x' });
+    assert.strictEqual(JSON.parse(fs.readFileSync(target, 'utf8')).model, 'x');
+    assert.ok(setupmod.hooksWired(target));
+    assert.strictEqual(setupmod.installHooks(target).written, false, 'already wired');
+    // No file yet: created, no backup.
+    const fresh = path.join(dir, 'new', 'settings.json');
+    const r2 = setupmod.installHooks(fresh);
+    assert.ok(r2.written && r2.backup === null && setupmod.hooksWired(fresh));
+    fs.writeFileSync(target, '{ broken');
+    const bad = setupmod.installHooks(target);
+    assert.ok(!bad.ok && /not valid JSON/.test(bad.error));
+    assert.strictEqual(fs.readFileSync(target, 'utf8'), '{ broken', 'a broken file is never overwritten');
+  });
+
+  // -------------------------------------------------------------------------
+  // Easy install: Tailscale, start on login, checks
+
+  const fakeTs = ({ running = true, serve = '', fail = false } = {}) => {
+    const calls = [];
+    const run = (cmd, args) => {
+      calls.push(args.join(' '));
+      if (args[0] === 'status') return { status: 0, stdout: JSON.stringify({ BackendState: running ? 'Running' : 'NeedsLogin', Self: { DNSName: 'box.example-tail.ts.net.' } }), stderr: '' };
+      if (args[0] === 'serve' && args[1] === 'status') return { status: 0, stdout: serve, stderr: '' };
+      if (args[0] === 'serve') return fail ? { status: 1, stdout: '', stderr: 'access denied' } : { status: 0, stdout: '', stderr: '' };
+      return { status: 1, stdout: '', stderr: 'unexpected' };
+    };
+    return { run, calls };
+  };
+
+  check('tailscale: state reads the tailnet name and whether this port is served', () => {
+    const { run } = fakeTs({ serve: 'https://box.example-tail.ts.net (tailnet only)\n|-- / proxy http://127.0.0.1:4545\n' });
+    const st = setupmod.tailscaleState(4545, { run, bin: '/x/tailscale' });
+    assert.deepStrictEqual([st.running, st.servesPort, st.servesOther, st.url], [true, true, false, 'https://box.example-tail.ts.net']);
+    assert.strictEqual(setupmod.tailscaleState(4545, { run, bin: null }).installed, false);
+    assert.strictEqual(setupmod.tailscaleState(4545, { run: fakeTs({ running: false }).run, bin: '/x/tailscale' }).running, false);
+  });
+
+  check('tailscale: serve uses 443, or 8443 when something else already owns the address', () => {
+    const plain = fakeTs();
+    const r = setupmod.tailscaleServe(4545, { run: plain.run, bin: '/x/tailscale' });
+    assert.ok(r.ok && plain.calls.includes('serve --bg 4545'));
+    assert.strictEqual(r.https, 443);
+    const busy = fakeTs({ serve: 'https://box.example-tail.ts.net (tailnet only)\n|-- / proxy http://127.0.0.1:3000\n' });
+    const r2 = setupmod.tailscaleServe(4545, { run: busy.run, bin: '/x/tailscale' });
+    assert.ok(busy.calls.includes('serve --bg --https=8443 4545'), busy.calls.join(' | '));
+    assert.strictEqual(r2.url, 'https://box.example-tail.ts.net:8443');
+    assert.ok(/--https=8443 off/.test(r2.undo));
+    assert.ok(!setupmod.tailscaleServe(4545, { run: fakeTs({ fail: true }).run, bin: '/x/tailscale' }).ok);
+    assert.ok(/tailscale\.com\/download/.test(setupmod.tailscaleServe(4545, { bin: null }).error));
+  });
+
+  check('start on login: register copies the unit and runs the per-user commands', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-home-'));
+    const unit = path.join(home, 'unit.plist');
+    fs.writeFileSync(unit, '<plist/>');
+    const ran = [];
+    const ok = setupmod.registerService('darwin', unit, { home, run: (c, a) => { ran.push(`${c} ${a.join(' ')}`); return { status: a[0] === 'unload' ? 3 : 0, stdout: '', stderr: '' }; } });
+    assert.ok(ok.ok, ok.error);
+    assert.ok(fs.existsSync(path.join(home, 'Library', 'LaunchAgents', 'com.halyard.bridge.plist')));
+    assert.ok(ran.some((r) => /^launchctl load -w /.test(r)));
+    assert.ok(setupmod.serviceInstalled('darwin', home));
+    const linux = setupmod.registerService('linux', unit, { home, run: (c, a) => ({ status: a.includes('enable') ? 1 : 0, stdout: '', stderr: 'no user bus' }) });
+    assert.ok(!linux.ok && /no user bus/.test(linux.error));
+    assert.ok(/schtasks|Unregister/.test(setupmod.registerCommands('win32', unit, home).undo));
+  });
+
+  check('checks: every failing step carries a plain fix, and the link prefers the tunnel', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-checks-'));
+    const paths = pathsmod.ensure(pathsmod.layout(dir));
+    const cfg = configmod.load({ file: null, env: {}, cli: { workspace: dir, engines: { claude: { command: '/definitely/not/here/claude' } } } });
+    const checks = setupmod.runChecks({
+      cfg, paths, health: null, env: {}, settingsPath: path.join(dir, 'settings.json'),
+      tailscale: { installed: false, running: false }, readCreds: () => { throw new Error('no'); },
+    });
+    assert.deepStrictEqual(checks.map((c) => c.id), ['node', 'agent', 'token', 'hooks', 'tunnel', 'phone']);
+    for (const c of checks.filter((x) => !x.ok)) assert.ok(c.fix && c.fix.length > 20, `${c.id} has no usable fix`);
+    assert.ok(/tailscale\.com\/download/.test(checks.find((c) => c.id === 'tunnel').fix));
+    const ts = { servesPort: true, url: 'https://box.example-tail.ts.net:8443' };
+    assert.strictEqual(setupmod.pairingUrl(cfg, 't k', ts), 'https://box.example-tail.ts.net:8443/?token=t%20k');
+    assert.strictEqual(setupmod.pairingUrl({ ...cfg, publicUrl: 'https://p.example/' }, 't', ts), 'https://p.example/?token=t');
+    assert.ok(setupmod.pairingUrl(cfg, 't', { servesPort: false }).startsWith('http://127.0.0.1:'));
+    const signedIn = setupmod.runChecks({
+      cfg: configmod.load({ file: null, env: {}, cli: { workspace: dir, engines: { claude: { command: process.execPath } } } }),
+      paths, health: { paired: true }, env: {}, settingsPath: path.join(dir, 'settings.json'),
+      tailscale: { installed: true, running: true, servesPort: true, url: 'https://x.ts.net' }, readCreds: () => ({ claudeAiOauth: { accessToken: 'a' } }),
+    });
+    assert.ok(signedIn.find((c) => c.id === 'agent').ok && signedIn.find((c) => c.id === 'phone').ok && signedIn.find((c) => c.id === 'tunnel').ok);
+  });
+
+  check('setup: a browser is opened only from a desktop terminal', () => {
+    assert.ok(setupmod.canOpenBrowser({}, 'darwin', true));
+    assert.ok(!setupmod.canOpenBrowser({}, 'darwin', false), 'not a terminal');
+    assert.ok(!setupmod.canOpenBrowser({ SSH_CONNECTION: '1 2 3 4' }, 'darwin', true), 'over SSH');
+    assert.ok(!setupmod.canOpenBrowser({}, 'linux', true), 'headless linux');
+    assert.ok(setupmod.canOpenBrowser({ DISPLAY: ':0' }, 'linux', true));
+  });
+
+  await checkAsync('setup page: the key gates everything, and Wire it up writes only the given settings file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-setup-'));
+    const paths = pathsmod.ensure(pathsmod.layout(dir));
+    fs.writeFileSync(paths.token, 'tok');
+    const cfg = configmod.load({ file: null, env: {}, cli: { workspace: dir, port: 1 } });
+    const settingsPath = path.join(dir, 'claude', 'settings.json');
+    let installed = 0;
+    const srv = createSetupServer({
+      boot: { cfg, paths },
+      token: 'tok',
+      deps: {
+        settingsPath, tailscaleBin: null, readCreds: () => ({}), serviceInstalled: () => false,
+        installService: async () => { installed += 1; return { ok: true, undo: 'u' }; },
+        startHalyard: async () => ({ ok: true }),
+      },
+    });
+    const url = await srv.listen();
+    try {
+      const base = url.split('/?')[0];
+      assert.strictEqual((await fetch(`${base}/api/status`)).status, 403);
+      assert.strictEqual((await fetch(`${base}/api/status?key=wrong`)).status, 403);
+      const page = await fetch(url);
+      assert.strictEqual(page.status, 200);
+      assert.ok((await page.text()).includes('Set up Halyard'));
+      const k = `key=${srv.key}`;
+      const s = await (await fetch(`${base}/api/status?${k}`)).json();
+      assert.strictEqual(s.checks.length, 6);
+      assert.ok(!s.checks.find((c) => c.id === 'hooks').ok);
+      const svg = await fetch(`${base}/api/qr.svg?${k}`);
+      assert.ok((await svg.text()).startsWith('<svg'));
+      const prev = await (await fetch(`${base}/api/hooks/preview?${k}`)).json();
+      assert.ok(prev.changed && prev.target === settingsPath);
+      assert.strictEqual((await fetch(`${base}/api/hooks/apply?${k}`, { method: 'POST' })).status, 200);
+      assert.ok(setupmod.hooksWired(settingsPath));
+      assert.strictEqual((await fetch(`${base}/api/service/install?${k}`, { method: 'POST' })).status, 200);
+      assert.strictEqual(installed, 1);
+      assert.strictEqual((await fetch(`${base}/api/tailscale/serve?${k}`, { method: 'POST' })).status, 400, 'no Tailscale here');
+      const done = srv.waitDone();
+      await fetch(`${base}/api/done?${k}`, { method: 'POST' });
+      await done;
+    } finally {
+      await srv.close();
+    }
+  });
+
+  await checkAsync('pairing: a tokened request through a tunnel marks the phone as paired', () => withServer(async ({ base, token, call }) => {
+    assert.strictEqual((await call('GET', '/api/health')).body.paired, false, 'this computer alone is not a phone');
+    await fetch(`${base}/api/health?token=${token}`, { headers: { 'x-forwarded-for': '100.101.102.103' } });
+    assert.strictEqual((await call('GET', '/api/health')).body.paired, true);
+    // Not without the token.
+  }));
+
+  check('page: a dismissible three-screen first-run tour, shown once', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const tour = /var TOUR = \[([\s\S]*?)\n  \];/.exec(html);
+    assert.ok(tour, 'TOUR not found');
+    assert.strictEqual((tour[1].match(/^\s*\['/gm) || []).length, 3);
+    assert.ok(/id="tour-skip"/.test(html) && /LS\.set\('toured', true\)/.test(html) && /if \(!LS\.get\('toured', false\)\) showTour\(0\)/.test(html));
   });
 
   // -------------------------------------------------------------------------
