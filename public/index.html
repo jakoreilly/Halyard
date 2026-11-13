@@ -1693,6 +1693,7 @@
   // if the archive is unreachable or the original entry has since been
   // deleted.
   var prefs = {};
+  var REACTIONS = ['\u{1F44D}', '❤️', '\u{1F602}', '\u{1F44E}'];
   function savePref(key, value) {
     prefs[key] = value;
     LS.set(key === 'pins' ? 'pinned' : key, value);
@@ -1806,6 +1807,20 @@
       act('Unpin', function () { pinToggle(n); });
     } else {
       if (window.speechSynthesis) act('Read', function (b) { speak(n.message, b, function () { b.textContent = 'Read'; }); });
+      var rb = act('', function (b) {
+        var c = (prefs.reactions || {})[n.id];
+        var all = Object.assign({}, prefs.reactions || {});
+        var next = REACTIONS[REACTIONS.indexOf(c && c.emoji) + 1];
+        if (next) all[n.id] = { emoji: next, at: Date.now() }; else delete all[n.id];
+        savePref('reactions', all);
+        paintReaction(b);
+      });
+      function paintReaction(b) {
+        var c = (prefs.reactions || {})[n.id];
+        b.textContent = c ? c.emoji : 'React';
+        b.setAttribute('aria-label', c ? 'Reaction ' + c.emoji + ', tap to change' : 'React to this reply');
+      }
+      paintReaction(rb);
       var pb = act('Pin', function (b) { pinToggle(n); b.textContent = isPinned(n.id) ? 'Pinned' : 'Pin'; el.classList.toggle('pinned', isPinned(n.id)); });
       pb.textContent = isPinned(n.id) ? 'Pinned' : 'Pin';
       act('Copy', function (b) {

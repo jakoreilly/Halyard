@@ -47,9 +47,13 @@ const BUILTIN_ENGINES = {
     ],
     stream: 'claude-json',
     modelMap: {
-      opus: 'claude-opus-5',
-      sonnet: 'claude-sonnet-5',
-      haiku: 'claude-haiku-4-5-20251001',
+      opus: 'claude-opus-5-5',
+      'opus-5': 'claude-opus-5',
+      sonnet: 'claude-sonnet-5-5',
+      'sonnet-5': 'claude-sonnet-5',
+      haiku: 'claude-haiku-5-5',
+      'haiku-4.5': 'claude-haiku-4-5-20251001',
+      fable: 'claude-fable-5-2',
     },
     // The phone's "Auto" model: resolved per message to `light` or `heavy` (both
     // modelMap keys) by src/router.js. A light start may hand the turn up by

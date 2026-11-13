@@ -2122,6 +2122,28 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.ok(!('unknownKey' in JSON.parse(fs.readFileSync(paths.prefs, 'utf8'))), 'only allow-listed keys are stored');
   }));
 
+  await checkAsync('reactions: saved in prefs without queuing a run, unknown emoji refused, empty removes', () => withServer(async ({ call, paths }) => {
+    const before = (await call('GET', '/api/health')).body.queued;
+    const thumbs = '\u{1F44D}';
+    assert.strictEqual((await call('POST', '/api/prefs', { reactions: { r9: { emoji: thumbs, at: 5 } } })).status, 200);
+    assert.strictEqual(JSON.parse(fs.readFileSync(paths.prefs, 'utf8')).reactions.r9.emoji, thumbs);
+    assert.strictEqual((await call('GET', '/api/health')).body.queued, before, 'a reaction must not queue a run');
+    assert.strictEqual((await call('POST', '/api/prefs', { reactions: { r9: { emoji: '<b>' } } })).status, 200);
+    assert.deepStrictEqual((await call('GET', '/api/prefs')).body.reactions, {}, 'an unknown emoji is dropped');
+    assert.strictEqual((await call('POST', '/api/prefs', { reactions: [1] })).status, 400);
+    const many = {};
+    for (let i = 0; i < 300; i++) many['m' + i] = { emoji: thumbs, at: i };
+    await call('POST', '/api/prefs', { reactions: many });
+    const kept = Object.keys((await call('GET', '/api/prefs')).body.reactions);
+    assert.strictEqual(kept.length, 200);
+    assert.ok(kept.includes('m299') && !kept.includes('m0'), 'the newest 200 survive');
+  }));
+
+  check('page: a reply has a React button that cycles and clears', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    assert.ok(/savePref\('reactions', all\)/.test(html) && /REACTIONS\.indexOf\(c && c\.emoji\) \+ 1/.test(html));
+  });
+
   check('diff: the page escapes everything git said', () => {
     const html = watcher.diffHtml({ runId: 'r1', thread: 'main', stat: ' a.js | 2 +-', patch: '+const x = "<script>alert(1)</script>";', untracked: ['<b>.txt'] });
     assert.ok(!/<script>alert/.test(html) && !/<b>\.txt/.test(html), 'source text must never become markup');
