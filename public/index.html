@@ -3,110 +3,69 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#fbfbf9" id="theme-color">
+<meta name="theme-color" content="#eef2f5" id="theme-color">
 <meta name="color-scheme" content="light dark">
 <title>Halyard</title>
-<!-- use-credentials: a manifest is fetched WITHOUT cookies by default, so the
-     token cookie never went with it, the route answered 401, and the app
-     manifest (install, share target) never loaded. -->
+
 <link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <style>
-  /* ===================================================================
-     Tokens.
 
-     The page is a working document, not a dashboard: one surface, rules
-     and space instead of nested rounded cards, and chromatic ink spent
-     only where it carries a meaning (a verdict, or a series inside a
-     chart frame). Two consequences worth stating, because both are easy
-     to undo by accident:
-
-       - The neutrals are a warm off-white and a neutral near-black.
-         Not #fff (which flares under near-black ink on a page made of
-         hairlines) and not blue-black, which reads as stock.
-       - Colour is never the only channel. Every status also carries a
-         shape - a 2px bar, a ring, a repeated word - so it survives a
-         mono printout and colour-blind reading.
-
-     Theme-INDEPENDENT scale first, so "slightly rounder" is one edit.
-     =================================================================== */
   :root {
-    --r-sm: 3px; --r-md: 5px; --r-lg: 9px; --r-xl: 14px;
-    --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 18px; --s-5: 26px; --s-6: 38px; --s-7: 56px;
-    --ease: cubic-bezier(.22,.61,.36,1); --dur: .14s; --ring: 2px;
+    --r-sm: 5px; --r-md: 9px; --r-lg: 13px; --r-xl: 18px;
+    --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 36px; --s-7: 56px;
+    --ease: cubic-bezier(.22,.61,.36,1); --dur: .15s; --ring: 2px;
     --mono-face: ui-monospace, "Cascadia Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    /* Lead with system-ui, then the platform's best CURRENT face (on
-       Windows 11 that is Segoe UI Variable Text, visibly better drawn
-       than plain Segoe UI), then the legacy stack underneath so nothing
-       regresses on an older OS. */
     --sans-face: system-ui, "Segoe UI Variable Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    /* A sticky offset is a measurement, not a preference. The page
-       measures the real bar and writes this back at runtime; the value
-       here is only what the first paint uses. */
-    --bar-h: 96px;
-    /* Likewise the fixed compose bar's height: the page's bottom padding
-       is what stops it covering the last section, and a guess here hides
-       content with nothing on screen to say so. */
-    --compose-h: 128px;
+    --disp: Bahnschrift, "DIN Alternate", "Roboto Condensed", "Arial Narrow", var(--sans-face);
+
+    --bar-h: 104px; --compose-h: 132px; --side: 0px; --measure: 760px;
   }
 
-  /* LIGHT is the base. */
   :root {
-    --bg: #fbfbf9; --panel-2: #f4f4f1; --panel-3: #eceae5;
-    --ink: #17181a; --ink-2: #3d3f43; --sub: #6a6d73;
-    --line: #e3e2de; --rule: #ecebe7; --hair: #d6d5d0;
-    --accent: #3f52a8; --accent-dim: rgba(63,82,168,.08);
-    --good: #2f6f4f; --watch: #8a6516; --poor: #a3382b; --unknown: #71747a;
-    --shadow: 0 16px 40px -14px rgba(23,24,26,.20), 0 1px 3px rgba(23,24,26,.07);
-    --lift: 0 1px 2px rgba(23,24,26,.05);
-    --glass: rgba(251,251,249,.85);
-    --c-grid: #eae9e4; --c-axis: #d2d1cc; --c-ref: #6a6d73;
-    /* Sequential single-hue, light page: a magnitude differs in POSITION,
-       not in kind, so the hue must not change across it. */
-    --seq-1: #ccd4ee; --seq-2: #b4bee5; --seq-3: #9aa7db; --seq-4: #8090cf;
-    --seq-5: #6777c0; --seq-6: #5060a6; --seq-7: #3b4a85; --seq-8: #2a3363;
-    /* Categorical, for a series inside a chart frame that has no other way
-       to identify itself. Okabe-Ito derived, so it survives deuteranopia,
-       protanopia and tritanopia. Kept PERMANENTLY apart from the status
-       inks above: a categorical hue never means a verdict, and a verdict
-       ink is never borrowed as "series four". */
+    --bg: #eef2f5; --surface: #fff; --panel-2: #f4f7f9; --panel-3: #e2e8ed;
+    --ink: #0d1826; --ink-2: #33414f; --sub: #586673;
+    --line: #d6dee5; --rule: #e3e9ee; --hair: #b9c5cf;
+    --accent: #0b62a8; --on-accent: #fff; --accent-dim: rgba(11,98,168,.1);
+    --good: #13795b; --watch: #8f5c08; --poor: #b3352a; --unknown: #6c7884;
+    --shadow: 0 18px 44px -16px rgba(13,24,38,.28), 0 2px 6px rgba(13,24,38,.08);
+    --lift: 0 1px 2px rgba(13,24,38,.06);
+    --glass: rgba(238,242,245,.86);
+    --seq-1: #c5dcee; --seq-2: #a9cbe6; --seq-3: #8bb8dc; --seq-4: #6ba3d1;
+    --seq-5: #4c8dc4; --seq-6: #3176b1; --seq-7: #1d5e97; --seq-8: #104676;
+
     --c-1: #3f52a8; --c-2: #a76a12; --c-3: #10796a; --c-4: #b4453a;
     --c-5: #6b4ca8; --c-6: #16708f; --c-7: #a33c79; --c-8: #5e7420;
   }
-  /* The media query must be GUARDED, or it re-darkens a page the reader
-     explicitly set to light on an OS in dark mode, and the control then
-     looks broken. */
+
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #0f1011; --panel-2: #17181a; --panel-3: #1d1e21;
-      --ink: #e8e7e4; --ink-2: #c3c2bf; --sub: #8d8d94;
-      --line: #26262b; --rule: #1e1e22; --hair: #2f3036;
-      --accent: #8fa0e2; --accent-dim: rgba(143,160,226,.13);
-      --good: #63b98d; --watch: #cfa457; --poor: #e0857b; --unknown: #8b8f99;
-      --shadow: 0 18px 48px -12px rgba(0,0,0,.72), 0 2px 8px rgba(0,0,0,.5);
-      --lift: inset 0 1px 0 rgba(255,255,255,.045);
-      --glass: rgba(15,16,17,.82);
-      --c-grid: #212227; --c-axis: #33343a; --c-ref: #8d8d94;
-      --seq-1: #39426b; --seq-2: #454f81; --seq-3: #525d97; --seq-4: #5f6cad;
-      --seq-5: #6f7cc0; --seq-6: #8290d0; --seq-7: #96a3de; --seq-8: #adb8e9;
+      --bg: #0a1119; --surface: #121c27; --panel-2: #18242f; --panel-3: #1f2d3a;
+      --ink: #e6edf3; --ink-2: #b9c5d0; --sub: #8696a5;
+      --line: #223140; --rule: #1a2733; --hair: #354a5d;
+      --accent: #5eb3ff; --on-accent: #06121d; --accent-dim: rgba(94,179,255,.14);
+      --good: #52d18b; --watch: #e2b04e; --poor: #f0877c; --unknown: #8b98a5;
+      --shadow: 0 20px 50px -12px rgba(0,0,0,.75), 0 2px 8px rgba(0,0,0,.5);
+      --lift: inset 0 1px 0 rgba(255,255,255,.04);
+      --glass: rgba(10,17,25,.84);
+      --seq-1: #173a59; --seq-2: #1d4a70; --seq-3: #245b88; --seq-4: #2c6da1;
+      --seq-5: #3a82bb; --seq-6: #4f98d2; --seq-7: #6fb0e4; --seq-8: #96c8f2;
       --c-1: #6e8bef; --c-2: #e0a33e; --c-3: #35b98f; --c-4: #e0796f;
       --c-5: #a98be8; --c-6: #4fb6d8; --c-7: #d07fb0; --c-8: #9ab55a;
     }
   }
-  /* Stated again under the attribute so the control wins in BOTH
-     directions, not only away from the OS preference. */
+
   :root[data-theme="dark"] {
-    --bg: #0f1011; --panel-2: #17181a; --panel-3: #1d1e21;
-    --ink: #e8e7e4; --ink-2: #c3c2bf; --sub: #8d8d94;
-    --line: #26262b; --rule: #1e1e22; --hair: #2f3036;
-    --accent: #8fa0e2; --accent-dim: rgba(143,160,226,.13);
-    --good: #63b98d; --watch: #cfa457; --poor: #e0857b; --unknown: #8b8f99;
-    --shadow: 0 18px 48px -12px rgba(0,0,0,.72), 0 2px 8px rgba(0,0,0,.5);
-    --lift: inset 0 1px 0 rgba(255,255,255,.045);
-    --glass: rgba(15,16,17,.82);
-    --c-grid: #212227; --c-axis: #33343a; --c-ref: #8d8d94;
-    --seq-1: #39426b; --seq-2: #454f81; --seq-3: #525d97; --seq-4: #5f6cad;
-    --seq-5: #6f7cc0; --seq-6: #8290d0; --seq-7: #96a3de; --seq-8: #adb8e9;
+    --bg: #0a1119; --surface: #121c27; --panel-2: #18242f; --panel-3: #1f2d3a;
+    --ink: #e6edf3; --ink-2: #b9c5d0; --sub: #8696a5;
+    --line: #223140; --rule: #1a2733; --hair: #354a5d;
+    --accent: #5eb3ff; --on-accent: #06121d; --accent-dim: rgba(94,179,255,.14);
+    --good: #52d18b; --watch: #e2b04e; --poor: #f0877c; --unknown: #8b98a5;
+    --shadow: 0 20px 50px -12px rgba(0,0,0,.75), 0 2px 8px rgba(0,0,0,.5);
+    --lift: inset 0 1px 0 rgba(255,255,255,.04);
+    --glass: rgba(10,17,25,.84);
+    --seq-1: #173a59; --seq-2: #1d4a70; --seq-3: #245b88; --seq-4: #2c6da1;
+    --seq-5: #3a82bb; --seq-6: #4f98d2; --seq-7: #6fb0e4; --seq-8: #96c8f2;
     --c-1: #6e8bef; --c-2: #e0a33e; --c-3: #35b98f; --c-4: #e0796f;
     --c-5: #a98be8; --c-6: #4fb6d8; --c-7: #d07fb0; --c-8: #9ab55a;
   }
@@ -116,111 +75,112 @@
   html, body { margin: 0; background: var(--bg); color: var(--ink); }
   body {
     font: 15px/1.55 var(--sans-face);
-    padding: 0 var(--s-4) calc(var(--compose-h) + var(--s-5));
-    max-width: 780px; margin: 0 auto;
+    padding-left: var(--side);
     overscroll-behavior-y: contain;
-    /* The default 17px Windows scrollbar is a grey slab down the side of
-       a document set in hairlines. */
     scrollbar-width: thin; scrollbar-color: var(--hair) transparent;
   }
   ::-webkit-scrollbar { width: 9px; height: 9px; }
   ::-webkit-scrollbar-thumb { background: var(--hair); border-radius: 999px; }
   ::-webkit-scrollbar-track { background: transparent; }
+  main { max-width: var(--measure); margin: 0 auto; padding: var(--s-4) var(--s-4) calc(var(--compose-h) + var(--s-5)); }
 
-  /* Proportional digits make a column ripple as values change length,
-     which on a page that repaints every few seconds is the clearest sign
-     of something assembled rather than typeset. */
-  td, th, code, time, .mono, .num, input[type=number], .value { font-variant-numeric: tabular-nums; }
+  td, th, code, time, .mono, .num, input[type=number], .value, .chip { font-variant-numeric: tabular-nums; }
 
-  /* Unglamorous, and the most reliable marker of a finished interface. */
   :where(a, button, summary, input, select, textarea, [tabindex]):focus-visible {
     outline: var(--ring) solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm);
   }
+  .ic { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-  /* --- the one sticky layer ------------------------------------------
-     Header and view switcher travel together in a single sticky element.
-     Two stacked sticky layers means two offsets to keep in agreement, and
-     the failure mode - the first row of content quietly hidden under the
-     second bar - renders as nothing wrong at all. */
   .topbar {
     position: sticky; top: 0; z-index: 30;
-    margin: 0 calc(var(--s-4) * -1); padding: 0 var(--s-4);
-    padding-top: env(safe-area-inset-top, 0px);
-    background: var(--bg);
-    border-bottom: 1px solid var(--rule);
+    padding: env(safe-area-inset-top, 0px) var(--s-4) 0;
+    background: var(--glass); border-bottom: 1px solid var(--line);
   }
-  @supports (backdrop-filter: blur(10px)) {
-    .topbar { background: var(--glass); backdrop-filter: blur(14px) saturate(140%); }
-  }
-  .masthead { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) 0 var(--s-2); }
+  @supports (backdrop-filter: blur(10px)) { .topbar { backdrop-filter: blur(16px) saturate(150%); } }
+  .masthead { display: flex; align-items: center; gap: var(--s-2); padding: 10px 0 var(--s-2); max-width: var(--measure); margin: 0 auto; }
   .masthead h1 {
-    font-size: 19px; margin: 0; font-weight: 300; letter-spacing: -.02em; color: var(--ink);
+    font: 600 19px/1 var(--disp); letter-spacing: .02em; margin: 0;
+    display: flex; align-items: center; gap: 9px;
   }
+  .masthead h1 svg { width: 26px; height: 26px; border-radius: 7px; }
   .sp { flex: 1; }
 
-  /* Connection: a dot carries the colour, a word carries the meaning.
-     Colour alone would be a status only a sighted reader on a colour
-     screen can take. */
-  .conn { display: inline-flex; align-items: center; gap: 6px; color: var(--sub); font-size: 12px; font-family: var(--mono-face); }
-  .conn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--unknown); flex: none; box-shadow: 0 0 0 2px var(--bg); }
-  .conn.up .dot { background: var(--good); }
-  .conn.down .dot { background: var(--poor); }
+  .conn {
+    display: inline-flex; align-items: center; gap: 6px; color: var(--sub);
+    font: 500 12.5px/1 var(--disp); padding: 6px 10px 6px 8px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--line);
+  }
+  .conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--unknown); flex: none; }
+  .conn.up { color: var(--ink-2); }
+  .conn.up .dot { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
+  .conn.down { color: var(--poor); border-color: currentColor; }
+  .conn.down .dot { background: var(--poor); border-radius: 2px; }
+  .icon-btn { width: 36px; height: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--ink-2); }
+  .offline-bar { display: none; max-width: var(--measure); margin: 0 auto var(--s-2); padding: 7px 11px; border-radius: var(--r-md); font-size: 13px; color: var(--poor); border: 1px solid currentColor; background: var(--surface); }
+  .offline .offline-bar { display: block; }
 
-  /* --- controls that look like controls ------------------------------
-     Primary navigation styled as text, on a page made of text, is
-     invisible: the reader concludes the app has one screen. A recessed
-     rail with the current item RAISED out of it reads as a switch, and
-     every reader already knows the pattern from their OS. */
   .rail {
-    display: flex; gap: 2px; padding: 3px; margin: 0 0 var(--s-2);
+    display: flex; gap: 2px; padding: 3px; margin: 0 auto var(--s-2); max-width: var(--measure);
     background: var(--panel-3); border-radius: var(--r-lg);
-    /* nowrap + sideways scroll: a control that can wrap invalidates its
-       own height, and the height is the sticky offset. */
     flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
   }
   .rail::-webkit-scrollbar { display: none; }
-  /* On a phone the rail fills the width, because a full-width target is
-     the whole point of a thumb control. On a desktop it must NOT: four
-     tabs spread across 780px read as four separate headings rather than
-     as one switch. */
-  @media (min-width: 560px) { .rail { width: -moz-fit-content; width: fit-content; } }
   .rail button {
-    flex: 1 0 auto; border: 1px solid transparent; background: transparent;
-    /* An inactive label on the muted ink reads as UNAVAILABLE. These are
-       all available; they are just not current. */
-    color: var(--ink-2); font-size: 13.5px; font-weight: 450;
-    padding: 7px 12px; border-radius: calc(var(--r-lg) - 3px);
-    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    flex: 1 0 auto; border: 0; background: transparent; color: var(--ink-2);
+    font: 500 14px/1 var(--disp); letter-spacing: .01em;
+    padding: 9px 10px; border-radius: calc(var(--r-lg) - 3px);
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
     transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
   }
-  .rail button[aria-selected="true"] {
-    background: var(--bg); border-color: var(--hair); color: var(--ink);
-    font-weight: 550; box-shadow: var(--lift);
-  }
-  .rail button:active { transform: translateY(1px); }
-  /* Outlined, not filled: a tag is a label on the surface, not a button
-     lying on it. The one exception is "ask", which is filled because it is
-     the only badge that means a run is blocked on the reader. */
+  .rail button .ic { width: 16px; height: 16px; opacity: .75; }
+  .rail button[aria-selected="true"] { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(13,24,38,.14); }
+  .rail button[aria-selected="true"] .ic { color: var(--accent); opacity: 1; }
   .rail .badge {
-    font-family: var(--mono-face); font-size: 10.5px; line-height: 1;
-    padding: 3px 5px; border-radius: var(--r-sm);
-    background: transparent; color: var(--sub); border: 1px solid var(--hair);
+    font: 600 11px/1 var(--disp); padding: 3px 6px; border-radius: 999px;
+    background: var(--panel-3); color: var(--sub);
   }
-  .rail .badge.live { color: var(--accent); border-color: currentColor; }
-  .rail .badge.ask { background: var(--watch); color: var(--bg); border-color: var(--watch); font-weight: 600; }
+  .rail [aria-selected="true"] .badge { background: var(--panel-2); }
+  .rail .badge.live { color: var(--accent); background: var(--accent-dim); }
 
-  /* --- sections are rules and space, not boxes ------------------------ */
-  section { margin: 0 0 var(--s-5); }
-  section + section { padding-top: var(--s-5); border-top: 1px solid var(--rule); }
-  /* Lowercase mono, because the label is an instrument reading. An
-     uppercase letterspaced 10px label is the single loudest generated-
-     dashboard tell. */
-  section > h2 {
-    font: 400 12px/1 var(--mono-face); color: var(--sub);
-    margin: 0 0 var(--s-3); letter-spacing: 0;
-    display: flex; align-items: center; gap: var(--s-2);
+  .rail .badge.ask { background: var(--watch); color: var(--bg); }
+
+  @media (max-width: 559px) {
+    .rail button { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 3px; padding: 7px 2px 6px; font-size: 12.5px; position: relative; }
+    .rail .badge { position: absolute; top: 3px; left: calc(50% + 9px); font-size: 10px; padding: 2px 5px; }
   }
-  section > h2 .sp { border-top: 1px solid var(--rule); height: 1px; }
+
+  section { margin: 0 0 var(--s-5); }
+  section > h2 {
+    font: 600 14.5px/1.2 var(--disp); letter-spacing: .015em; color: var(--ink);
+    margin: 0 0 10px; min-height: 22px; display: flex; align-items: center; gap: var(--s-2);
+  }
+  section > h2 .tiny { font-weight: 400; color: var(--sub); }
+  .panel, .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r-xl); padding: var(--s-4); box-shadow: var(--lift);
+  }
+  .view:not(.hidden) { animation: rise .2s var(--ease); }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+
+  #view-now { position: relative; padding-left: 22px; }
+  #view-now::before {
+    content: ""; position: absolute; left: 5px; top: 8px; bottom: 0; width: 2px;
+    background: repeating-linear-gradient(var(--hair) 0 7px, transparent 7px 10px);
+  }
+  #view-now > section { position: relative; }
+  #view-now > section::before {
+    content: ""; position: absolute; left: -22px; top: 5px; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--bg); border: 2px solid var(--hair);
+  }
+  #idle::before { border-color: var(--good) !important; }
+  #run-box::before { background: var(--accent) !important; border-color: var(--accent) !important; animation: ping 1.8s var(--ease) infinite; }
+  @keyframes ping { 0% { box-shadow: 0 0 0 0 var(--accent-dim); } 70%, 100% { box-shadow: 0 0 0 9px transparent; } }
+
+  #ask::before { width: 14px !important; height: 14px !important; left: -23px !important; border: 0 !important; border-radius: 0 !important; background: var(--watch) !important; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+  #failed::before, #taps::before { background: var(--poor) !important; border-color: var(--poor) !important; border-radius: 2px !important; }
+  #steps-box::before { top: 14px !important; width: 8px !important; height: 8px !important; left: -20px !important; }
+  #idle { display: flex; align-items: baseline; gap: var(--s-2); flex-wrap: wrap; min-height: 22px; }
+  #idle b { font: 600 14.5px/1.5 var(--disp); letter-spacing: .015em; }
 
   .row { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
   .grow { flex: 1; min-width: 0; }
@@ -229,362 +189,342 @@
   .tiny { font-size: 12px; }
   .mono { font-family: var(--mono-face); font-size: 12.5px; }
   .stack { display: flex; flex-direction: column; gap: var(--s-2); }
+  .sub-h { font: 600 12.5px/1 var(--disp); letter-spacing: .02em; color: var(--sub); margin-top: var(--s-3); }
 
-  /* A figure never appears without what it was measured over, so the two
-     are one component and it is awkward to quote one alone. */
-  .figure { display: flex; flex-direction: column; gap: 2px; }
-  .figure .value { font-size: 32px; font-weight: 250; letter-spacing: -.03em; line-height: 1.05; color: var(--ink); }
-  .figure .over { font: 400 11.5px/1.3 var(--mono-face); color: var(--sub); }
-  /* A tone tints the LABEL, never the figure: a 32px number in red reads
-     as an alarm before it reads as a number. */
-  .figure .over.good { color: var(--good); }
-  .figure .over.watch { color: var(--watch); }
-  .figure .over.poor { color: var(--poor); }
+  .figure { display: flex; flex-direction: column; gap: 4px; }
+  .figure .value { font: 300 40px/1 var(--disp); letter-spacing: -.01em; color: var(--ink); }
+  .figure .over { font-size: 12.5px; line-height: 1.35; color: var(--sub); }
 
   button, select, input, textarea {
     font: inherit; color: var(--ink); background: var(--panel-2);
-    border: 1px solid var(--line); border-radius: var(--r-md); padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: var(--r-md); padding: 8px 11px;
   }
   input::placeholder, textarea::placeholder { color: var(--sub); }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: 0; box-shadow: 0 0 0 3px var(--accent-dim); }
+  input[type=checkbox] { accent-color: var(--accent); width: 18px; height: 18px; }
   button {
-    cursor: pointer; -webkit-appearance: none; appearance: none;
-    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+    cursor: pointer; -webkit-appearance: none; appearance: none; font-weight: 500;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease), transform .08s;
   }
-  /* The 1px press is most of the perceived quality, and it is free. */
-  button:active { transform: translateY(1px); }
-  button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 550; }
+  button:active { transform: scale(.97); }
+  button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
   button.ghost { background: transparent; }
-  button.danger { color: var(--poor); border-color: var(--line); background: transparent; }
+  button.danger { color: var(--poor); background: transparent; }
   button:disabled { opacity: .45; cursor: default; }
-  button.sm { padding: 5px 9px; font-size: 12.5px; }
-  /* First-run tour: three screens, dismissible, shown once per device. */
-  .tour { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.45); display: grid; place-items: end center; padding: var(--s-4, 16px); }
-  .tour.hidden { display: none; }
-  .tour-card { background: var(--panel, var(--bg)); color: inherit; border: 1px solid var(--line); border-radius: 16px; padding: 20px; width: min(100%, 26rem); box-shadow: 0 10px 40px rgba(0,0,0,.25); margin-bottom: 12vh; }
-  .tour-card h3 { margin: 0 0 6px; font-size: 18px; }
-  .tour-card p { margin: 0 0 14px; color: var(--sub); }
-  .tour-dots { display: flex; gap: 6px; margin-bottom: 14px; }
-  .tour-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
-  .tour-dots i.on { background: currentColor; }
-  /* A link that has to look like a button (the artifact Save download). */
-  a.btn { display: inline-block; text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: var(--r-md); padding: 5px 9px; font-size: 12.5px; }
-  /* The live run's model, beside what it is running. */
-  .chip { padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--sub); background: var(--panel-2); white-space: nowrap; }
+  button.sm { padding: 5px 10px; font-size: 12.5px; border-radius: 999px; }
+  a.btn { display: inline-block; text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; font-size: 12.5px; font-weight: 500; }
+  .chip { padding: 2px 9px; border-radius: 999px; color: var(--ink-2); background: var(--panel-3); white-space: nowrap; font: 500 12px/1.6 var(--disp); }
   @media (hover: hover) and (pointer: fine) {
-    button:not(:disabled):hover { border-color: var(--hair); background: var(--panel-3); }
-    button.primary:not(:disabled):hover { background: var(--ink-2); border-color: var(--ink-2); }
-    button.danger:not(:disabled):hover { background: var(--panel-2); border-color: var(--poor); }
+    button:not(:disabled):hover, a.btn:hover { border-color: var(--hair); background: var(--panel-3); }
+    button.primary:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 86%, var(--ink)); border-color: transparent; }
+    button.danger:not(:disabled):hover { background: color-mix(in srgb, var(--poor) 9%, transparent); border-color: var(--poor); }
+    .reply:hover { border-color: var(--hair); }
   }
   textarea { width: 100%; resize: vertical; min-height: 84px; line-height: 1.45; }
-  /* The native widget draws an OS arrow that ignores the theme. Two token-
-     coloured triangles make a caret that follows light, dark and print. */
+
   select {
-    padding-right: 26px; -webkit-appearance: none; appearance: none;
+    padding-right: 28px; -webkit-appearance: none; appearance: none;
     background-image:
       linear-gradient(45deg, transparent 50%, var(--sub) 50%),
       linear-gradient(135deg, var(--sub) 50%, transparent 50%);
-    background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+    background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
     background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
   }
   a { color: var(--accent); text-underline-offset: 2px; }
 
-  /* --- discrete objects get a fill; nothing else does ----------------- */
-  .card {
-    background: var(--panel-2); border: 1px solid var(--line);
-    border-radius: var(--r-lg); padding: var(--s-3); box-shadow: var(--lift);
+  .sw { display: flex; align-items: center; gap: var(--s-3); font-size: 14px; color: var(--ink-2); padding: 6px 0; cursor: pointer; }
+  .sw input {
+    -webkit-appearance: none; appearance: none; flex: none; width: 38px !important; height: 22px; padding: 0 !important;
+    border-radius: 999px; background: var(--panel-3); border: 1px solid var(--hair); position: relative;
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
   }
-  /* The stripe is the shape that carries the status when the colour does
-     not survive - a mono printout, or a reader who cannot separate the
-     hues. */
-  .card.tone { border-left: 3px solid var(--unknown); }
-  .card.tone.ask { border-left-color: var(--watch); }
+  .sw input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform var(--dur) var(--ease); }
+  .sw input:checked { background: var(--accent); border-color: var(--accent); }
+  .sw input:checked::after { transform: translateX(16px); }
+  .sw input:disabled { opacity: .4; }
+
+  .card.tone { border-left: 4px solid var(--unknown); }
   .card.tone.run { border-left-color: var(--accent); }
-  /* Amber means "waiting on a human", and nothing else on the page uses it
-     for a block this size. A pending approval is framed all the way round
-     so it cannot be mistaken for the ordinary cards around it. */
-  #ask .card.tone.ask {
-    padding: var(--s-4); border-color: var(--watch); border-left-width: 3px;
-    background: var(--panel-2);
-    background: color-mix(in srgb, var(--watch) 8%, var(--panel-2));
-  }
-  #ask-q { font-size: 17px; line-height: 1.4; letter-spacing: -.01em; white-space: pre-wrap; overflow-wrap: anywhere; }
-  #ask .cmd { color: var(--ink); }
-  #ask .cmd:not(.hidden)::before { content: "> "; color: var(--sub); }
-  .opt { flex: 1 1 0; min-height: 44px; font-weight: 550; }
   .card.tone.fail { border-left-color: var(--poor); }
 
-  /* --- run -------------------------------------------------------------
-     An indeterminate rule rather than a pulsing dot: it says "still
-     moving" in the reader's peripheral vision without asking to be
-     looked at, and it stops dead under prefers-reduced-motion. */
-  .ticker { height: 2px; background: var(--panel-3); border-radius: 999px; overflow: hidden; margin: var(--s-2) 0; }
-  .ticker > i { display: block; height: 100%; width: 35%; background: var(--accent); animation: slide 1.6s var(--ease) infinite; }
+  #ask .card {
+    border-color: var(--watch); border-left-width: 4px; box-shadow: var(--shadow); overflow: hidden; position: relative;
+    background: color-mix(in srgb, var(--watch) 7%, var(--surface));
+  }
+  #ask-bar { position: absolute; left: 0; top: 0; height: 3px; width: 100%; background: var(--watch); transition: width 1s linear; }
+  #ask-q { font-size: 17.5px; font-weight: 500; line-height: 1.38; letter-spacing: -.01em; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cmd { background: var(--bg); border: 1px solid var(--line); padding: 10px var(--s-3); border-radius: var(--r-md); overflow-x: auto; white-space: pre; margin: var(--s-3) 0; color: var(--ink); }
+  .cmd:not(.hidden)::before { content: "$ "; color: var(--sub); }
+  #ask-left { flex-basis: 100%; text-align: left !important; color: var(--watch); font: 600 13px/1.3 var(--disp); }
+  .opt { flex: 1 1 0; min-height: 48px; font-weight: 600; font-size: 15.5px; border-radius: var(--r-lg); }
+  .opt.danger { border-color: var(--poor); }
+
+  #run-what { font: 600 13.5px/1.3 var(--disp); letter-spacing: .01em; }
+  #run-elapsed { font: 500 13px/1 var(--disp); color: var(--accent); }
+  #run-msg { margin-top: var(--s-2); overflow-wrap: anywhere; font-size: 15px; }
+  .ticker { height: 3px; background: var(--panel-3); border-radius: 999px; overflow: hidden; margin: var(--s-3) 0 var(--s-2); }
+  .ticker > i { display: block; height: 100%; width: 35%; border-radius: 999px; background: var(--accent); animation: slide 1.6s var(--ease) infinite; }
   @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
-  #run-activity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #run-draft { white-space: pre-wrap; margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--line); color: var(--ink-2); max-height: 38vh; overflow: auto; }
+  #run-activity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono-face); font-size: 12.5px; }
+  #run-draft { white-space: pre-wrap; color: var(--ink-2); max-height: 38vh; overflow: auto; }
+  #run-draft:not(:empty) { margin-top: var(--s-3); padding: var(--s-3); background: var(--panel-2); border-radius: var(--r-md); }
   #steps { max-height: 45vh; overflow: auto; }
-  #steps div { padding: 3px 0; border-bottom: 1px solid var(--rule); color: var(--ink-2); }
-  #steps div:last-child { border-bottom: 0; }
+  #steps div, .det-body.mono div { padding: 4px 0 4px var(--s-3); border-left: 2px solid var(--rule); color: var(--ink-2); overflow-wrap: anywhere; }
+  #steps div:last-child { border-left-color: var(--accent); color: var(--ink); }
 
-  #ask .cmd { background: var(--bg); border: 1px solid var(--line); padding: var(--s-2); border-radius: var(--r-md); overflow-x: auto; white-space: pre; margin: var(--s-2) 0; }
-
-  /* --- replies -------------------------------------------------------- */
-  .reply { display: flex; flex-direction: column; border-top: 1px solid var(--rule); padding: var(--s-3) var(--s-2); margin: 0 calc(var(--s-2) * -1); border-left: 2px solid transparent; }
-  .reply:first-child { border-top: 0; }
-  .reply .meta { display: flex; gap: var(--s-2); align-items: center; font: 400 11.5px/1.4 var(--mono-face); color: var(--sub); margin-bottom: 6px; flex-wrap: wrap; }
+  .reply {
+    display: flex; flex-direction: column; background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--r-lg);
+    padding: var(--s-3) 14px; margin-bottom: 10px; box-shadow: var(--lift);
+    transition: border-color var(--dur) var(--ease);
+  }
+  .reply .meta { display: flex; gap: var(--s-2); align-items: center; font: 500 12px/1.4 var(--disp); letter-spacing: .01em; color: var(--sub); margin-bottom: 6px; flex-wrap: wrap; cursor: default; }
   .reply .text { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .reply .text code { background: var(--panel-2); padding: .1em .35em; border-radius: var(--r-sm); font-family: var(--mono-face); font-size: .92em; }
+  .reply .text code { background: var(--panel-2); padding: .1em .35em; border-radius: var(--r-sm); font-family: var(--mono-face); font-size: .9em; }
   .reply .text p { margin: 0 0 var(--s-2); }
   .reply .text p:last-child { margin-bottom: 0; }
   .reply .text pre.code {
-    margin: var(--s-2) 0; padding: var(--s-2) var(--s-3); overflow-x: auto; white-space: pre;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-md);
+    margin: var(--s-2) 0; padding: 10px var(--s-3); overflow-x: auto; white-space: pre;
+    background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-md);
     font: 12.5px/1.5 var(--mono-face);
   }
   .reply .text pre.code code { background: none; padding: 0; font-size: inherit; }
-  .reply .text .md-h { font-weight: 600; margin: var(--s-3) 0 var(--s-1); }
+  .reply .text .md-h { font: 600 16px/1.3 var(--disp); margin: var(--s-3) 0 var(--s-1); }
   .reply .text .md-l { margin: 0 0 var(--s-2); padding-left: 1.4em; white-space: normal; }
   .reply .text .md-l li { margin-bottom: 2px; }
-  .reply .text .md-q { border-left: 2px solid var(--hair); padding-left: var(--s-2); color: var(--ink-2); margin: 0 0 var(--s-2); }
+  .reply .text .md-q { border-left: 3px solid var(--hair); padding-left: var(--s-3); color: var(--ink-2); margin: 0 0 var(--s-2); }
   .reply .text .md-hr { border: 0; border-top: 1px solid var(--rule); margin: var(--s-3) 0; }
   .reply .text.clamp { max-height: 30em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 3em), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 3em), transparent); }
-  /* What was sent reads as the reader's own turn: a bubble at the top and
-     on the right, with the answer below it on the left. */
+  .reply > button { align-self: flex-start; margin-top: var(--s-2); }
+  .reply .text > button { margin-bottom: var(--s-2); }
+
   .reply .prompt {
-    order: -1; align-self: flex-end; max-width: 85%;
-    margin-bottom: var(--s-2); padding: var(--s-2) var(--s-3);
-    background: var(--panel-3); border: 1px solid var(--line); color: var(--ink-2);
-    border-radius: var(--r-lg) var(--r-lg) 2px var(--r-lg);
+    order: -1; align-self: flex-end; max-width: 88%;
+    margin-bottom: 10px; padding: 7px var(--s-3);
+    background: var(--accent-dim); color: var(--ink);
+    border-radius: var(--r-lg) var(--r-lg) 3px var(--r-lg);
     overflow-wrap: anywhere;
   }
-  .reply .acts { display: flex; gap: 6px; margin-top: var(--s-2); flex-wrap: wrap; }
-  .reply .acts .destructive { margin-left: auto; }
+
+  .reply .acts { display: flex; gap: 6px; margin-top: var(--s-3); padding-top: 10px; border-top: 1px solid var(--rule); flex-wrap: wrap; align-items: center; }
+  .reply .acts .lead { order: -1; color: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .reply .acts .more { order: 1; margin-left: auto; border-color: transparent; color: var(--sub); }
+  .reply .acts .x { order: 2; display: none; }
+  .reply .acts.open .x { display: inline-block; }
+  .reply .acts .destructive { color: var(--poor); }
   .reply.internal .text { color: var(--sub); }
-  .reply.pinned { border-left-color: var(--hair); }
-  /* Collapsed by default, so a pile of pins is one row and never pushes the
-     latest reply down the page. The heading is the toggle; the preview is the
-     newest pin's first line. */
+  .reply.pinned { box-shadow: inset 3px 0 0 var(--accent), var(--lift); }
   #pinned-head {
-    all: unset; box-sizing: border-box; width: 100%; min-height: 44px; cursor: pointer;
+    all: unset; box-sizing: border-box; width: 100%; min-height: 32px; cursor: pointer;
     display: flex; align-items: center; gap: var(--s-2);
   }
   #pinned-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
-  #pinned-head .chev { margin-left: auto; transition: transform 180ms ease; }
+  #pinned-head .chev { margin-left: auto; color: var(--sub); transition: transform 180ms ease; }
   #pinned-head[aria-expanded='true'] .chev { transform: rotate(90deg); }
-  @media (prefers-reduced-motion: reduce) { #pinned-head .chev { transition: none; } }
   #pinned-preview {
     font-size: 13.5px; color: var(--ink-2); cursor: pointer; min-height: 44px;
-    display: flex; align-items: center; padding: 0 var(--s-2);
-    border-left: 2px solid var(--hair); overflow: hidden;
+    display: flex; align-items: center; padding: 0 var(--s-3);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+    box-shadow: inset 3px 0 0 var(--accent); overflow: hidden;
   }
   #pinned-preview span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  @media (hover: hover) and (pointer: fine) {
-    /* An edge as well as a fill: on a long list the fill alone is easy to
-       lose when the pointer is out at the right-hand edge. */
-    .reply:hover { background: var(--panel-2); border-left-color: var(--hair); }
-  }
 
-  /* --- compose -------------------------------------------------------- */
+  .thread-bar { padding: var(--s-3); border-radius: var(--r-lg); }
+  .thread-bar select { font: 600 14px/1.3 var(--disp); background-color: var(--panel-2); }
+  #handover { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+  #handover.open { display: block; }
+
   .compose {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-    padding: var(--s-2) var(--s-4) calc(var(--s-2) + env(safe-area-inset-bottom, 0px));
-    /* The base colour must be legible ALONE - a browser without the
-       filter must not be left with see-through chrome over moving text. */
-    background: var(--glass);
-    border-top: 1px solid var(--line);
+    position: fixed; left: var(--side); right: 0; bottom: 0; z-index: 40;
+    padding: var(--s-2) var(--s-4) calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--glass); border-top: 1px solid var(--line);
   }
-  @supports (backdrop-filter: blur(10px)) {
-    .compose { backdrop-filter: blur(16px) saturate(140%); }
+  @supports (backdrop-filter: blur(10px)) { .compose { backdrop-filter: blur(18px) saturate(150%); } }
+  .compose .inner { max-width: var(--measure); margin: 0 auto; display: flex; gap: var(--s-2); align-items: flex-end; }
+  .compose .field {
+    gap: 2px; padding: 5px; background: var(--surface); border: 1px solid var(--hair);
+    border-radius: 24px; box-shadow: var(--lift);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
   }
-  .compose .inner { max-width: 780px; margin: 0 auto; display: flex; gap: var(--s-2); align-items: flex-end; }
-  .compose textarea { min-height: 42px; max-height: 38vh; resize: none; overflow-y: auto; }
-  .compose button.primary { height: 42px; padding: 0 16px; flex: none; }
-  .compose select { font-size: 12px; padding: 5px 20px 5px 7px; }
+  .compose .field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .compose textarea { min-height: 40px; max-height: 38vh; resize: none; overflow-y: auto; border: 0; background: transparent; padding: 9px 6px; box-shadow: none !important; }
+  .compose .opts-btn { position: relative; height: 40px; width: 40px; padding: 0; flex: none; border: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--sub); }
+  .compose .opts-btn[aria-expanded="true"] { background: var(--panel-3); color: var(--ink); }
+
+  .compose .opts-btn.set::after {
+    content: ""; position: absolute; top: 7px; right: 7px;
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 2px var(--surface);
+  }
+  #send { height: 40px; width: 40px; padding: 0; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+  #send .ic { stroke-width: 2.4; }
+  .compose select { font-size: 13px; padding: 7px 24px 7px 10px; background-color: var(--surface); }
   .snips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
   .snips::-webkit-scrollbar { display: none; }
-  /* The snippet row sits directly above the textarea, so it has to share the
-     textarea's measure. Without this it inherits the full width of the fixed
-     bar and its first chip hangs to the left of the box it fills - invisible
-     on a phone, obvious on anything wider than the 780px measure. */
-  .compose .snips { max-width: 780px; margin: 0 auto var(--s-2); }
+  .compose .snips { max-width: var(--measure); margin: 0 auto var(--s-2); }
   .snip {
-    flex: none; font-size: 12px; padding: 4px 9px; border-radius: 999px;
-    border: 1px solid var(--line); background: transparent; color: var(--ink-2); white-space: nowrap;
+    flex: none; font-size: 12.5px; padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); white-space: nowrap;
     max-width: 46vw; overflow: hidden; text-overflow: ellipsis;
   }
-  .snip.add { color: var(--sub); border-style: dashed; }
-  .snip[aria-pressed="true"] {
-    background: var(--panel-2); border-color: var(--hair); color: var(--ink); font-weight: 550;
-    box-shadow: var(--lift);
-  }
+  .snip.add { color: var(--sub); border-style: dashed; background: transparent; }
+  .snip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 
-  /* A pending approval mirrored above the input, so Approve / Deny is one
-     tap from any view. Hidden on Now, where the full card is already on
-     screen. */
   .dock-ask {
-    max-width: 780px; margin: 0 auto var(--s-2); padding: var(--s-2) var(--s-3);
-    border: 1px solid var(--watch); border-radius: var(--r-lg);
-    background: var(--bg);
-    background: color-mix(in srgb, var(--watch) 9%, var(--bg));
+    max-width: var(--measure); margin: 0 auto var(--s-2); padding: 10px var(--s-3);
+    border: 1px solid var(--watch); border-left-width: 4px; border-radius: var(--r-lg);
+    background: color-mix(in srgb, var(--watch) 9%, var(--surface)); box-shadow: var(--shadow);
   }
-  .dock-ask .q {
-    font-size: 13.5px; line-height: 1.35; overflow: hidden;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  }
-  .dock-ask .cmd {
-    margin-top: var(--s-1); font: 12px/1.35 var(--mono-face); color: var(--ink-2);
-    max-height: 2.7em; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
-  }
-  .dock-ask .cmd::before { content: "> "; color: var(--sub); }
+  .dock-ask .q { font-size: 14px; font-weight: 500; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .dock-ask .cmd { margin: var(--s-1) 0 0; padding: 0; border: 0; background: none; font: 12px/1.35 var(--mono-face); color: var(--ink-2); max-height: 2.7em; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
   .dock-ask .opts { display: flex; gap: var(--s-2); margin-top: var(--s-2); }
-  /* Beats .compose button.primary (flex: none; height: 42px), which would
-     otherwise leave Approve narrower than Deny. */
-  .compose .dock-ask .opts .opt { flex: 1 1 0; height: auto; min-height: 44px; padding: 0 var(--s-3); }
+  .dock-ask .opts .opt { min-height: 44px; padding: 0 var(--s-3); }
 
-  /* Send options (engine, model, when) live behind one square button, so
-     the fixed bar costs one row on a phone instead of two. The dot says
-     something other than the defaults is selected. */
-  .compose .opts-btn {
-    position: relative; height: 42px; width: 42px; padding: 0; flex: none;
-    display: inline-flex; align-items: center; justify-content: center; color: var(--sub);
-  }
-  .compose .opts-btn[aria-expanded="true"] { background: var(--panel-3); color: var(--ink); }
-  .compose .opts-btn.set::after {
-    content: ""; position: absolute; top: 6px; right: 6px;
-    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
-    box-shadow: 0 0 0 2px var(--bg);
-  }
-
-  /* A row that scrolls sideways says so: the edge it continues past fades.
-     JS sets data-more to l, r or lr only while there is more to see. */
   [data-more="r"]  { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
   [data-more="l"]  { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
   [data-more="lr"] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 
-  /* --- misc ------------------------------------------------------------ */
   .warn { color: var(--watch); }
   .bad { color: var(--poor); }
   .ok { color: var(--good); }
-  /* A note carries a word AND a stripe, so the level survives mono. */
-  .note { border-left: 2px solid var(--line); padding-left: var(--s-2); margin-bottom: 6px; }
+  .note { border-left: 3px solid var(--line); padding: 2px 0 2px var(--s-3); margin-bottom: var(--s-2); }
   .note.warn { border-left-color: var(--watch); }
   details > summary {
-    cursor: pointer; color: var(--ink-2); font-size: 13.5px; padding: 7px 0;
-    list-style: none; display: flex; align-items: center; gap: 7px;
-    border-top: 1px solid var(--rule);
+    cursor: pointer; color: var(--ink-2); font-size: 13.5px; font-weight: 500; padding: 7px 0;
+    list-style: none; display: flex; align-items: center; gap: 8px;
   }
   details > summary::-webkit-details-marker { display: none; }
   details > summary::before {
-    content: ""; width: 5px; height: 5px; flex: none;
-    border-right: 1.5px solid var(--sub); border-bottom: 1.5px solid var(--sub);
+    content: ""; width: 6px; height: 6px; flex: none;
+    border-right: 2px solid var(--sub); border-bottom: 2px solid var(--sub);
     transform: rotate(-45deg); transition: transform var(--dur) var(--ease);
   }
   details[open] > summary::before { transform: rotate(45deg); }
-  details > summary:hover { color: var(--ink); }
   .det-body { padding: var(--s-2) 0 var(--s-3); }
   .hidden { display: none !important; }
-  .bar { height: 5px; border-radius: 999px; background: var(--panel-3); overflow: hidden; }
-  .bar > i { display: block; height: 100%; background: var(--seq-5); }
+  .bar { height: 7px; border-radius: 999px; background: var(--panel-3); overflow: hidden; }
+  .bar > i { display: block; height: 100%; border-radius: 999px; background: var(--seq-5); transition: width .4s var(--ease); }
   ul.plain { list-style: none; margin: 0; padding: 0; }
-  ul.plain li { padding: 8px 0; border-top: 1px solid var(--rule); display: flex; gap: var(--s-2); align-items: center; }
+  ul.plain li { padding: 10px 0; border-top: 1px solid var(--rule); display: flex; gap: var(--s-2); align-items: center; }
   ul.plain li:first-child { border-top: 0; }
-  /* A queued message is prose and a timestamp is a reading; sitting them
-     in one flex row squeezes the prose into a two-word column on a phone.
-     Stack them and let the text have the width. */
-  ul.plain li.stacked { display: block; }
-  ul.plain li.stacked .when { display: flex; gap: var(--s-2); align-items: center; margin-top: 5px; }
-  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px var(--s-3); font-family: var(--mono-face); font-size: 12.5px; }
-  .kv dt { color: var(--sub); }
-  .kv dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
-  .empty { color: var(--sub); font-size: 13.5px; padding: var(--s-3) 0; }
-  mark { background: var(--accent-dim); color: inherit; border-radius: var(--r-sm); padding: 0 1px; }
 
-  /* --- toast and sheet ----------------------------------------------------
-     A native alert/confirm blocks the page, shows the origin instead of the
-     app, and cannot carry an Undo. A toast reports; a sheet asks. */
+  ul.plain li.stacked { display: block; }
+  ul.plain li.stacked .when { display: flex; gap: var(--s-2); align-items: center; margin-top: 6px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 5px var(--s-4); font-size: 13.5px; margin: 0; }
+  .kv dt { color: var(--sub); font-family: var(--mono-face); font-size: 12.5px; }
+  .kv dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+
+  .tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s-2); }
+  .tiles div { padding: 10px var(--s-3); background: var(--panel-2); border-radius: var(--r-md); min-width: 0; }
+  .tiles dt { font: 600 11.5px/1.4 var(--disp); letter-spacing: .04em; text-transform: uppercase; }
+  .tiles dd { font: 500 14px/1.35 var(--disp); color: var(--ink); }
+  .tiles .wide { grid-column: 1 / -1; }
+  .tiles .bad dd { color: var(--poor); }
+  .empty { color: var(--sub); font-size: 13.5px; padding: var(--s-2) 0; }
+  #convo > .empty, #replies > .empty { padding: var(--s-5) var(--s-4); text-align: center; border: 1px dashed var(--hair); border-radius: var(--r-lg); }
+  mark { background: color-mix(in srgb, var(--watch) 30%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+  #log-out { max-height: 45vh; overflow: auto; white-space: pre-wrap; }
+  #log-out:not(:empty) { padding: var(--s-3); background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-md); }
+  .search { position: relative; }
+  .search .ic { position: absolute; left: 11px; top: 50%; margin-top: -9px; color: var(--sub); pointer-events: none; }
+  .search input { width: 100%; padding-left: 36px; background: var(--surface); border-radius: 999px; }
+
   .toasts {
-    position: fixed; left: 0; right: 0; z-index: 60;
+    position: fixed; left: var(--side); right: 0; z-index: 60;
     bottom: calc(var(--compose-h) + var(--s-2));
     display: flex; flex-direction: column; align-items: center; gap: var(--s-2);
     padding: 0 var(--s-4); pointer-events: none;
   }
   .toast {
-    pointer-events: auto; width: 100%; max-width: 560px;
-    display: flex; gap: var(--s-2); align-items: center;
-    background: var(--panel-2); border: 1px solid var(--hair);
-    border-left: 3px solid var(--unknown); border-radius: var(--r-lg);
-    padding: var(--s-2) var(--s-3); box-shadow: var(--shadow); font-size: 13.5px;
+    pointer-events: auto; max-width: min(100%, 520px);
+    display: flex; gap: var(--s-3); align-items: center;
+    background: var(--ink); color: var(--bg); border-radius: var(--r-lg);
+    padding: 10px 14px; box-shadow: var(--shadow); font-size: 13.5px;
+    animation: rise .22s var(--ease);
   }
-  .toast.ok { border-left-color: var(--good); }
-  .toast.bad { border-left-color: var(--poor); }
-  .scrim {
-    position: fixed; inset: 0; z-index: 70; background: var(--glass);
-    display: flex; align-items: flex-end; justify-content: center;
+  .toast::before { content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--unknown); }
+  .toast.ok::before { background: var(--good); }
+  .toast.bad::before { background: var(--poor); border-radius: 2px; }
+  .toast button { color: inherit; border-color: currentColor; font-weight: 600; }
+  .scrim, .tour {
+    position: fixed; inset: 0; z-index: 70; background: rgba(6,12,20,.5);
+    display: flex; align-items: flex-end; justify-content: center; animation: fade .18s;
   }
-  @supports (backdrop-filter: blur(10px)) { .scrim { backdrop-filter: blur(6px); } }
-  .sheet {
-    width: 100%; max-width: 560px; background: var(--bg);
-    border: 1px solid var(--hair); border-radius: var(--r-xl) var(--r-xl) 0 0;
-    padding: var(--s-4); padding-bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px));
-    box-shadow: var(--shadow);
+  @keyframes fade { from { opacity: 0; } }
+  @supports (backdrop-filter: blur(10px)) { .scrim, .tour { backdrop-filter: blur(4px); } }
+  .sheet, .tour-card {
+    width: 100%; max-width: 480px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 22px 22px 0 0;
+    padding: var(--s-5) var(--s-5) calc(var(--s-5) + env(safe-area-inset-bottom, 0px));
+    box-shadow: var(--shadow); animation: rise .24s var(--ease);
   }
-  @media (min-width: 560px) { .scrim { align-items: center; } .sheet { border-radius: var(--r-xl); } }
-  .sheet h3 { margin: 0 0 var(--s-2); font-size: 16px; font-weight: 600; }
-  .sheet input { width: 100%; margin-top: var(--s-2); }
-  .sheet .sheet-acts { display: flex; gap: var(--s-2); justify-content: flex-end; margin-top: var(--s-4); }
+  @media (min-width: 560px) { .scrim, .tour { align-items: center; } .sheet, .tour-card { border-radius: 22px; } }
+  .sheet h3, .tour-card h3 { margin: 0 0 var(--s-2); font: 600 19px/1.25 var(--disp); }
+  .sheet input { width: 100%; margin-top: var(--s-3); }
+  .sheet .sheet-acts { display: flex; gap: var(--s-2); justify-content: flex-end; margin-top: var(--s-5); }
+  .sheet .sheet-acts button { min-height: 42px; padding: 0 var(--s-4); }
 
-  /* A canvas loop is not reachable from a stylesheet, so the JS honours
-     this too - see prefersReducedMotion() below. */
+  .tour-card p { margin: 0 0 var(--s-4); color: var(--ink-2); }
+  .tour-dots { display: flex; gap: 6px; margin-bottom: var(--s-4); }
+  .tour-dots i { width: 22px; height: 4px; border-radius: 999px; background: var(--panel-3); transition: background var(--dur); }
+  .tour-dots i.on { background: var(--accent); }
+  .tour-card button { min-height: 40px; padding: 0 var(--s-4); }
+
+  @media (min-width: 960px) {
+    :root { --side: 228px; }
+    .topbar {
+      position: fixed; left: 0; top: 0; bottom: 0; width: var(--side);
+      display: flex; flex-direction: column; align-items: stretch; gap: var(--s-2);
+      padding: var(--s-5) var(--s-3) var(--s-4);
+      border-bottom: 0; border-right: 1px solid var(--line); background: var(--surface); backdrop-filter: none;
+    }
+    .masthead { display: contents; }
+    .masthead h1 { order: -2; padding: 0 var(--s-2) var(--s-4); font-size: 21px; }
+    .rail { order: -1; flex-direction: column; background: none; padding: 0; margin: 0; overflow: visible; gap: 3px; }
+    .rail button { justify-content: flex-start; padding: 11px var(--s-3); gap: 11px; font-size: 15px; border-radius: var(--r-md); }
+    .rail button[aria-selected="true"] { background: var(--accent-dim); box-shadow: none; }
+    .rail .badge { margin-left: auto; }
+    .conn { align-self: flex-start; }
+    .offline-bar { order: 5; margin: 0; }
+    main { padding-top: var(--s-6); }
+    .sheet, .tour-card { margin-left: var(--side); }
+  }
+  @media (min-width: 1280px) { :root { --measure: 820px; } }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
     .ticker > i { width: 100%; animation: none; }
   }
 
-  /* --- touch ------------------------------------------------------------
-     Safari on iOS zooms the viewport when a focused field is under 16px and
-     never zooms back, so every tap on the message box rescaled the page. The
-     selectors are listed out because `.small`, `.tiny` and `.compose select`
-     each beat a bare `input` on specificity. */
   @media (pointer: coarse) {
     input, textarea, select,
-    input.small, input.tiny, select.small, .compose select, .compose textarea { font-size: 16px; }
-    button.sm, a.btn { min-height: 40px; padding: 8px 12px; font-size: 13.5px; }
-    .rail .badge, .reply .meta { font-size: 12px; }
-    .snip { min-height: 36px; padding: 6px 12px; font-size: 13.5px; }
+    input.small, input.tiny, select.small, .compose select, .compose textarea, .thread-bar select { font-size: 16px; }
+    button.sm, a.btn { min-height: 40px; padding: 8px 14px; font-size: 13.5px; }
+    .snip { min-height: 36px; padding: 6px 13px; font-size: 13.5px; }
   }
 
-  /* --- print is a third theme, not an afterthought --------------------
-     Flip the WHOLE token set. Overriding only body leaves every panel
-     painted from a near-black surface token, and the page prints as
-     black rectangles with invisible text. */
   @media print {
     :root, :root[data-theme="dark"], :root[data-theme="light"] {
-      --bg: #fff; --panel-2: #fff; --panel-3: #f2f2f0;
+      --bg: #fff; --surface: #fff; --panel-2: #fff; --panel-3: #f2f2f0;
       --ink: #000; --ink-2: #222; --sub: #555;
       --line: #bbb; --rule: #ddd; --hair: #999;
-      --accent: #31428d; --good: #0c6659; --watch: #8f5a0e; --poor: #9c3a30; --unknown: #666;
-      --shadow: none; --lift: none; --glass: #fff;
-      /* The screen ramp's lightest steps are legible on a lit panel and
-         disappear on paper - a 2% bar of #e2e6f2 on white is a blank
-         row, which reads as no data rather than as a small number. The
-         print ramp starts well down the scale for that reason. */
+      --accent: #17508a; --good: #0c6659; --watch: #8f5a0e; --poor: #9c3a30; --unknown: #666;
+      --shadow: none; --lift: none; --glass: #fff; --side: 0px;
+
       --seq-1: #a7b2d2; --seq-2: #97a3c9; --seq-3: #8795c0; --seq-4: #7786b7;
       --seq-5: #6777ae; --seq-6: #566796; --seq-7: #43527e; --seq-8: #2f3d66;
       --c-1: #31428d; --c-2: #8f5a0e; --c-3: #0c6659; --c-4: #9c3a30;
       --c-5: #5a3f8f; --c-6: #125f79; --c-7: #8c3367; --c-8: #4f621b;
     }
-    body { padding: 0; max-width: none; }
-    .toasts, .scrim, .topbar, .compose, .rail, .acts, #run-steer-row, .dock-ask { display: none !important; }
-    /* Every view prints; the switcher is a screen affordance only. */
-    .view { display: block !important; }
-    .view::before { content: attr(data-title); display: block; font: 400 11px var(--mono-face); color: #555; margin: 18px 0 6px; }
-    section { break-inside: avoid; }
+    main { padding: 0; max-width: none; }
+    .toasts, .scrim, .tour, .topbar, .compose, .acts, #run-steer-row, #idle { display: none !important; }
+
+    .view { display: block !important; animation: none; }
+    .view::before { content: attr(data-title); display: block; font: 600 12px var(--disp); color: #555; margin: 18px 0 6px; }
+    section, .reply { break-inside: avoid; }
     details { display: block; }
     details > summary { display: none; }
-    /* A search box and a Fetch button are affordances, not content. On
-       paper they are dead furniture that makes the page look like a
-       screenshot of an app rather than a document. Checkboxes stay,
-       because their state IS content. */
+
     button, input:not([type="checkbox"]), select { display: none !important; }
     .det-body { display: block !important; }
     a { color: #000; }
@@ -592,69 +532,80 @@
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-now" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+  <symbol id="i-replies" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+  <symbol id="i-work" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/></symbol>
+  <symbol id="i-system" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7L14 5.5a3.5 3.5 0 0 1 5 5L10.5 19a2 2 0 0 1-3-3L15 8.5"/></symbol>
+  <symbol id="i-find" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></symbol>
+  <symbol id="i-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4v16M12 8l5.5-2M12 12h8M12 16l5.5 2" /></symbol>
+  <symbol id="i-light" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></symbol>
+  <symbol id="i-dark" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></symbol>
+</svg>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
 <div class="topbar">
   <div class="masthead">
-    <h1>Halyard</h1>
-    <span class="conn" id="conn"><span class="dot"></span><span id="conn-text">connecting</span></span>
+    <h1><svg viewBox="0 0 128 128" aria-hidden="true"><rect width="128" height="128" fill="#0e1622"/><rect x="60" y="20" width="8" height="88" rx="4" fill="#3d4a5c"/><path d="M64 26C40 34 34 58 44 78c8 16 32 16 40 0 10-20 4-44-20-52" fill="none" stroke="#5eb3ff" stroke-width="7" stroke-linecap="round"/><circle cx="64" cy="24" r="9" fill="#5eb3ff"/><circle cx="64" cy="104" r="7" fill="#52d18b"/></svg>Halyard</h1>
     <span class="sp"></span>
-    <button class="ghost sm" id="outbox-btn" title="Messages parked while offline" hidden></button>
-    <button class="ghost sm" id="theme-btn" title="Light, dark or follow the system">auto</button>
+    <button class="ghost sm" id="outbox-btn" title="Messages parked while offline. Tap to send them now." hidden></button>
+    <span class="conn" id="conn"><span class="dot"></span><span id="conn-text">connecting</span></span>
+    <button class="ghost icon-btn" id="theme-btn" title="Light, dark or follow the system"><svg class="ic"><use id="theme-ic" href="#i-auto"/></svg></button>
   </div>
-  <!-- Roving tabindex: one stop in the tab order, arrows move within.
-       Same pattern as every OS segmented control. -->
+  <div class="offline-bar" role="status">No connection to your computer. Anything you send is parked here and goes out by itself when the link is back.</div>
+
   <div class="rail" role="tablist" aria-label="View">
-    <button role="tab" id="tab-now" aria-selected="true" tabindex="0" data-view="now">Now<span class="badge hidden" id="badge-now"></span></button>
-    <button role="tab" id="tab-replies" aria-selected="false" tabindex="-1" data-view="replies">Replies<span class="badge hidden" id="badge-replies"></span></button>
-    <button role="tab" id="tab-work" aria-selected="false" tabindex="-1" data-view="work">Work<span class="badge hidden" id="badge-work"></span></button>
-    <button role="tab" id="tab-system" aria-selected="false" tabindex="-1" data-view="system">System<span class="badge hidden" id="badge-system"></span></button>
+    <button role="tab" id="tab-now" aria-selected="true" tabindex="0" data-view="now"><svg class="ic"><use href="#i-now"/></svg>Now<span class="badge hidden" id="badge-now"></span></button>
+    <button role="tab" id="tab-replies" aria-selected="false" tabindex="-1" data-view="replies"><svg class="ic"><use href="#i-replies"/></svg>Replies<span class="badge hidden" id="badge-replies"></span></button>
+    <button role="tab" id="tab-work" aria-selected="false" tabindex="-1" data-view="work"><svg class="ic"><use href="#i-work"/></svg>Work<span class="badge hidden" id="badge-work"></span></button>
+    <button role="tab" id="tab-system" aria-selected="false" tabindex="-1" data-view="system"><svg class="ic"><use href="#i-system"/></svg>System<span class="badge hidden" id="badge-system"></span></button>
   </div>
 </div>
 
-<!-- =====================================================================
-     NOW - what is happening, and anything that is waiting on the reader.
-     ===================================================================== -->
 <main>
 <div class="view" id="view-now" role="tabpanel" aria-labelledby="tab-now" data-title="Now">
 
   <section id="ask" class="hidden">
-    <h2>needs your answer</h2>
+    <h2>Needs your answer</h2>
     <div class="card tone ask">
+      <i id="ask-bar"></i>
       <div id="ask-q"></div>
-      <div class="row tiny muted mono" id="ask-meta" style="margin-top:var(--s-2)"></div>
+      <div class="row tiny muted" id="ask-meta" style="margin-top:var(--s-2)"></div>
       <div class="cmd mono" id="ask-cmd"></div>
       <div class="row" id="ask-opts"></div>
-      <div class="stack hidden" id="ask-scope" style="margin-top:var(--s-2)"></div>
+      <div class="stack hidden" id="ask-scope" style="margin-top:var(--s-3)"></div>
     </div>
   </section>
 
   <section id="run-box" class="hidden">
-    <h2>running<span class="sp grow"></span><span class="tiny" id="run-elapsed"></span></h2>
+    <h2>Running<span class="sp grow"></span><span id="run-elapsed"></span></h2>
     <div class="card tone run">
       <div class="row">
-        <div class="grow small mono" id="run-what"></div>
-        <span class="chip tiny mono hidden" id="run-model" title="Model this run is on"></span>
+        <div class="grow" id="run-what"></div>
+        <span class="chip hidden" id="run-model" title="Model this run is on"></span>
         <button class="danger sm" id="run-kill">Stop</button>
       </div>
-      <div class="small" id="run-msg" style="margin-top:var(--s-2);overflow-wrap:anywhere"></div>
+      <div id="run-msg"></div>
       <div class="ticker" id="run-ticker"><i></i></div>
-      <div class="small muted" id="run-activity"></div>
+      <div class="muted" id="run-activity"></div>
       <div class="small" id="run-draft"></div>
       <div class="row" id="run-steer-row" style="margin-top:var(--s-3)">
-        <input class="grow small" id="run-steer" placeholder="Steer this run">
+        <input class="grow small" id="run-steer" placeholder="Steer this run, e.g. skip the tests" aria-label="Steer this run">
         <button class="ghost sm" id="run-steer-go">Steer</button>
       </div>
       <div class="tiny muted" id="run-steer-note" style="margin-top:6px"></div>
     </div>
   </section>
 
+  <section id="idle" class="hidden"><b>Standing by</b><span class="small muted" id="idle-text"></span></section>
+
   <section id="queue-box" class="hidden">
-    <h2><span id="queue-title">waiting</span></h2>
-    <ul class="plain" id="queue"></ul>
+    <h2><span id="queue-title">Waiting</span></h2>
+    <ul class="plain panel" id="queue" style="padding-top:4px;padding-bottom:4px"></ul>
   </section>
 
-  <!-- Deliberately OUTSIDE the run card, so it survives the run ending. -->
   <section id="steps-box" class="hidden">
     <details id="steps-details">
       <summary><span id="steps-count">0</span> steps</summary>
@@ -662,26 +613,24 @@
     </details>
   </section>
 
-  <!-- Relay approvals that timed out with nobody at the phone. The hook denied
-       them, so the push or merge they gated did not happen. -->
   <section id="taps" class="hidden">
-    <h2><span id="taps-title">needs your tap</span><span class="sp grow"></span><button class="ghost sm" id="taps-dismiss-all">Dismiss all</button></h2>
+    <h2><span id="taps-title">Needs your tap</span><span class="sp grow"></span><button class="ghost sm" id="taps-dismiss-all">Dismiss all</button></h2>
     <div class="card tone fail">
-      <div class="tiny muted">These waited for an approval nobody tapped in time, so they did not run. Run again asks you once more.</div>
+      <div class="small muted">These waited for an approval nobody tapped in time, so they did not run. Run again asks you once more.</div>
       <div id="taps-list"></div>
     </div>
   </section>
 
   <section id="hold" class="hidden">
-    <h2>held by a guard</h2>
+    <h2>Held by a guard</h2>
     <div class="card tone run"><div class="small" id="hold-text"></div></div>
   </section>
 
   <section id="failed" class="hidden">
-    <h2>last run failed</h2>
+    <h2>Last run failed</h2>
     <div class="card tone fail">
-      <div class="small" id="failed-why"></div>
-      <div class="small muted mono" id="failed-msg" style="margin:var(--s-2) 0"></div>
+      <div id="failed-why"></div>
+      <div class="small muted mono" id="failed-msg" style="margin:var(--s-2) 0 var(--s-3)"></div>
       <div class="row">
         <button class="primary sm" id="failed-retry">Retry that message</button>
         <button class="ghost sm" id="failed-dismiss">Dismiss</button>
@@ -689,88 +638,78 @@
     </div>
   </section>
 
-  <section>
-    <h2>thread</h2>
-    <div class="stack">
-      <div class="row">
-        <select class="grow" id="thread" aria-label="Thread"></select>
-        <button class="ghost sm" id="thread-new">New</button>
-        <button class="ghost sm" id="thread-clear">Clear context</button>
-      </div>
-      <div class="small muted" id="handover"></div>
-      <div class="tiny muted mono" id="thread-ws" style="overflow-wrap:anywhere"></div>
-    </div>
-  </section>
-
   <section id="pinned-box" class="hidden">
-    <h2><button type="button" id="pinned-head" aria-expanded="false" aria-controls="pinned">pinned <span id="pinned-count"></span><span class="chev" aria-hidden="true">▸</span></button></h2>
+    <h2><button type="button" id="pinned-head" aria-expanded="false" aria-controls="pinned">Pinned <span class="tiny" id="pinned-count"></span><span class="chev" aria-hidden="true">▸</span></button></h2>
     <div id="pinned-preview" title="Newest pin - tap to show all"><span></span></div>
     <div id="pinned" class="hidden"></div>
   </section>
 
   <section id="convo-box">
-    <h2><span id="convo-title">conversation</span><span class="sp grow"></span><button class="ghost sm" id="convo-all">All replies</button></h2>
+    <h2><span id="convo-title">Conversation</span><span class="sp grow"></span><button class="ghost sm" id="convo-all">All replies</button></h2>
+    <div class="panel thread-bar stack" style="margin-bottom:10px">
+      <div class="row">
+        <select class="grow" id="thread" aria-label="Thread"></select>
+        <button class="ghost sm" id="thread-new">New thread</button>
+        <button class="ghost sm" id="thread-clear" title="Forget what the agent carries forward in this thread">Clear context</button>
+      </div>
+      <div class="small muted" id="handover" title="Tap to show all of it"></div>
+      <div class="tiny muted mono" id="thread-ws" style="overflow-wrap:anywhere"></div>
+    </div>
     <div id="convo"></div>
   </section>
 </div>
 
-<!-- =====================================================================
-     REPLIES - the archive, searchable, filterable by thread.
-     ===================================================================== -->
 <div class="view hidden" id="view-replies" role="tabpanel" aria-labelledby="tab-replies" data-title="Replies">
   <section>
-    <h2>replies</h2>
     <div class="stack">
       <div class="row">
-        <input class="grow" id="search" placeholder="Search all replies" inputmode="search" aria-label="Search replies">
+        <div class="search grow"><svg class="ic"><use href="#i-find"/></svg><input id="search" placeholder="Search every reply and prompt" inputmode="search" aria-label="Search replies"></div>
         <button class="ghost sm" id="search-go">Find</button>
       </div>
       <div class="snips" id="thread-filter"></div>
       <div class="tiny muted" id="search-note"></div>
     </div>
     <div id="replies" style="margin-top:var(--s-3)"></div>
-    <button class="ghost sm hidden" id="older" style="margin-top:var(--s-3)">Load older replies</button>
+    <button class="ghost sm hidden" id="older" style="margin-top:var(--s-2)">Load older replies</button>
   </section>
 </div>
 
-<!-- =====================================================================
-     WORK - things the agent produced, and things it will do later.
-     ===================================================================== -->
 <div class="view hidden" id="view-work" role="tabpanel" aria-labelledby="tab-work" data-title="Work">
 
-  <section id="usage-box">
-    <h2>usage<span class="sp grow"></span><button class="ghost sm" id="usage-go">Check usage</button></h2>
-    <div class="stack hidden" id="usage"></div>
-  </section>
-
-  <section id="spend-box">
-    <h2>spend<span class="sp grow"></span></h2>
-    <div class="snips" id="spend-range"></div>
+  <section id="spend-box" class="panel">
+    <h2>Spend<span class="sp grow"></span></h2>
+    <div class="snips" id="spend-range" style="margin-bottom:var(--s-3)"></div>
     <div class="stack" id="spend"><div class="empty">Loading.</div></div>
   </section>
 
-  <section>
-    <h2>scheduled</h2>
+  <section id="usage-box" class="panel">
+    <h2>Usage limits<span class="sp grow"></span><button class="ghost sm" id="usage-go">Check usage</button></h2>
+    <div class="small muted">How much of the agent's plan allowance is used. Checked on request.</div>
+    <div class="stack hidden" id="usage" style="margin-top:var(--s-3)"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Scheduled</h2>
     <ul class="plain" id="scheduled"></ul>
   </section>
 
-  <section>
-    <h2>artifacts</h2>
+  <section class="panel">
+    <h2>Files the agent made</h2>
     <div class="stack">
       <div class="row">
-        <input class="grow small" id="art-search" placeholder="Search name or contents">
+        <div class="search grow"><svg class="ic"><use href="#i-find"/></svg><input class="small" id="art-search" placeholder="Search name or contents" aria-label="Search files"></div>
         <button class="ghost sm" id="art-search-go">Find</button>
       </div>
       <ul class="plain" id="art-search-results"></ul>
       <ul class="plain" id="artifacts"></ul>
     </div>
     <details style="margin-top:var(--s-3)">
-      <summary>Clean up old artifacts</summary>
+      <summary>Clean up old files</summary>
       <div class="det-body stack">
         <div class="row">
-          <span class="tiny muted">Older than</span>
-          <input class="tiny" id="art-prune-days" type="number" min="1" value="30" style="width:5em" aria-label="Age in days">
-          <span class="tiny muted">days</span>
+          <span class="small muted">Older than</span>
+          <input class="small" id="art-prune-days" type="number" min="1" value="30" style="width:5em" aria-label="Age in days">
+          <span class="small muted">days</span>
           <button class="ghost sm" id="art-prune-preview">Preview</button>
         </div>
         <ul class="plain" id="art-prune-list"></ul>
@@ -780,45 +719,36 @@
   </section>
 </div>
 
-<!-- =====================================================================
-     SYSTEM - the bridge's own state. Read when something is wrong.
-     ===================================================================== -->
 <div class="view hidden" id="view-system" role="tabpanel" aria-labelledby="tab-system" data-title="System">
 
-  <section id="warn-box" class="hidden">
-    <h2>warnings</h2>
+  <section id="warn-box" class="panel hidden">
+    <h2>Warnings</h2>
     <div id="warnings"></div>
   </section>
 
-  <section>
-    <h2>bridge</h2>
-    <dl class="kv" id="status-kv"></dl>
+  <section class="panel">
+    <h2>Bridge</h2>
+    <dl class="kv tiles" id="status-kv"></dl>
   </section>
 
-  <section>
-    <h2>notifications</h2>
+  <section class="panel">
+    <h2>Notifications</h2>
     <div class="stack">
       <div class="row">
-        <button class="ghost sm" id="push-toggle">Enable push</button>
-        <span class="tiny muted grow" id="push-note"></span>
+        <button class="primary sm" id="push-toggle">Enable push</button>
+        <span class="small muted grow" id="push-note"></span>
       </div>
-      <label class="row tiny muted" style="gap:6px">
-        <input type="checkbox" id="opt-vibrate" style="width:auto;padding:0">
-        Vibrate when a run needs an answer
-      </label>
-      <label class="row tiny muted" style="gap:6px">
-        <input type="checkbox" id="opt-wake" style="width:auto;padding:0">
-        Keep the screen awake while a run is active
-      </label>
+      <label class="sw"><input type="checkbox" id="opt-vibrate">Vibrate when a run needs an answer</label>
+      <label class="sw"><input type="checkbox" id="opt-wake">Keep the screen awake while a run is active</label>
       <div class="tiny muted" id="wake-note"></div>
-      <div class="tiny muted mono" style="margin-top:var(--s-2)">devices that receive push</div>
+      <div class="sub-h">Devices that receive push</div>
       <ul class="plain" id="push-devices"></ul>
-      <div class="tiny muted mono" style="margin-top:var(--s-2)">quiet threads</div>
-      <div class="snips" id="mute-threads"></div>
-      <div class="tiny muted mono" style="margin-top:var(--s-2)">quiet hours</div>
+      <div class="sub-h">Quiet threads <span class="muted" style="font-weight:400">- tap one to silence its replies</span></div>
+      <div class="snips" id="mute-threads" style="flex-wrap:wrap"></div>
+      <div class="sub-h">Quiet hours</div>
       <div class="row">
         <input type="time" id="quiet-from" aria-label="Quiet hours start">
-        <span class="tiny muted">to</span>
+        <span class="small muted">to</span>
         <input type="time" id="quiet-to" aria-label="Quiet hours end">
         <button class="ghost sm" id="quiet-clear">Clear</button>
       </div>
@@ -826,16 +756,16 @@
     </div>
   </section>
 
-  <section>
-    <h2>secrets</h2>
+  <section class="panel">
+    <h2>Secrets</h2>
     <div class="row">
-      <a class="grow small" href="/secrets">Hand a credential to the agent, or collect one from it</a>
+      <a class="grow" href="/secrets">Hand a credential to the agent, or collect one from it</a>
     </div>
-    <div class="tiny muted">Values go straight to a private file on this machine - never through the chat or the logs.</div>
+    <div class="small muted">Values go straight to a private file on this machine - never through the chat or the logs.</div>
   </section>
 
-  <section>
-    <h2>logs</h2>
+  <section class="panel">
+    <h2>Logs</h2>
     <div class="stack">
       <div class="row">
         <select id="log-file" aria-label="Log file">
@@ -845,24 +775,21 @@
         </select>
         <button class="ghost sm" id="log-go">Fetch</button>
       </div>
-      <div class="mono tiny" id="log-out" style="max-height:45vh;overflow:auto;white-space:pre-wrap"></div>
+      <div class="mono tiny" id="log-out"></div>
     </div>
   </section>
 
-  <section>
-    <h2>message box</h2>
-    <label class="row tiny muted" style="gap:6px">
-      <input type="checkbox" id="opt-enter" style="width:auto;padding:0">
-      Enter sends the message (Shift+Enter for a new line)
-    </label>
+  <section class="panel">
+    <h2>Message box</h2>
+    <label class="sw"><input type="checkbox" id="opt-enter">Enter sends the message (Shift+Enter for a new line)</label>
   </section>
 
-  <section>
-    <h2>shortcuts</h2>
+  <section class="panel">
+    <h2>Keyboard</h2>
     <dl class="kv">
       <dt>1 - 4</dt><dd>switch view</dd>
       <dt>/</dt><dd>search replies</dd>
-      <dt>c</dt><dd>compose</dd>
+      <dt>c</dt><dd>write a message</dd>
       <dt>ctrl + enter</dt><dd>send (always)</dd>
       <dt>esc</dt><dd>leave the field</dd>
     </dl>
@@ -871,9 +798,6 @@
 </div>
 </main>
 
-<!-- The compose bar is fixed, because queueing work is the whole point of
-     the page and must never be more than one tap away, whatever is on
-     screen. -->
 <div class="compose">
   <div class="dock-ask hidden" id="dock-ask" role="alert">
     <div class="q" id="dock-ask-q"></div>
@@ -881,19 +805,15 @@
     <div class="opts" id="dock-ask-opts"></div>
   </div>
   <div class="snips" id="snips"></div>
-  <div class="inner">
-    <textarea id="msg" placeholder="Message the agent" aria-label="Message"></textarea>
-    <button class="ghost opts-btn" id="attach-btn" aria-label="Attach a file or photo">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7L14 5.5a3.5 3.5 0 0 1 5 5L10.5 19a2 2 0 0 1-3-3L15 8.5"/></svg>
-    </button>
+  <div class="inner field">
+    <button class="ghost opts-btn" id="attach-btn" aria-label="Attach a file or photo" title="Attach a file or photo"><svg class="ic"><use href="#i-clip"/></svg></button>
     <input type="file" id="attach-file" class="hidden" aria-hidden="true" tabindex="-1">
-    <button class="ghost opts-btn" id="opts-btn" aria-expanded="false" aria-controls="opts-row" aria-label="Send options">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
-    </button>
-    <button class="primary" id="send">Send</button>
+    <textarea id="msg" rows="1" placeholder="Message the agent" aria-label="Message"></textarea>
+    <button class="ghost opts-btn" id="opts-btn" aria-expanded="false" aria-controls="opts-row" aria-label="Send options"><svg class="ic"><use href="#i-system"/></svg></button>
+    <button class="primary" id="send" aria-label="Send" title="Send"><svg class="ic"><use href="#i-send"/></svg></button>
   </div>
-  <div class="tiny muted hidden" id="opts-summary" style="max-width:780px;margin:4px auto 0"></div>
-  <div class="inner hidden" id="opts-row" style="margin-top:6px;gap:6px">
+  <div class="tiny muted hidden" id="opts-summary" style="max-width:var(--measure);margin:6px auto 0;padding-left:var(--s-3)"></div>
+  <div class="inner hidden" id="opts-row" style="margin-top:var(--s-2);gap:6px">
     <select id="engine" class="grow" aria-label="Engine"></select>
     <select id="model" class="grow" aria-label="Model"></select>
     <select id="when" class="grow" aria-label="When to run">
@@ -907,10 +827,7 @@
       <option value="at">At a date and time...</option>
     </select>
   </div>
-  <!-- Revealed only by the "At..." option, because a date field permanently
-       on the bar costs a row of height on every send that does not need one.
-       datetime-local carries no timezone, which is the correct reading here:
-       the picker means the wall clock of the phone holding it. -->
+
   <div class="inner hidden" id="when-at-row" style="margin-top:6px;gap:6px">
     <input type="datetime-local" class="grow" id="when-at" aria-label="Run at">
     <button class="ghost sm" id="when-at-clear">Clear</button>
@@ -927,9 +844,9 @@
     <h3 id="tour-title"></h3>
     <p id="tour-text"></p>
     <div class="row">
-      <button class="ghost sm" id="tour-skip">Skip</button>
+      <button class="ghost" id="tour-skip">Skip</button>
       <span class="grow"></span>
-      <button class="primary sm" id="tour-next">Next</button>
+      <button class="primary" id="tour-next">Next</button>
     </div>
   </div>
 </div>
@@ -938,8 +855,6 @@
 (function () {
   'use strict';
 
-  // The token is in the URL the notification / home-screen icon opened, and the
-  // server also sets it as a cookie, so an in-page navigation keeps working.
   var TOKEN = new URLSearchParams(location.search).get('token') || '';
   var $ = function (id) { return document.getElementById(id); };
   var LS = {
@@ -1064,18 +979,13 @@
     });
   }
 
-  // ---------------------------------------------------------------------
-  // Theme. Three states, not two: "auto" has to be reachable again once a
-  // reader has pinned one, or the control is a one-way door.
   var THEMES = ['auto', 'light', 'dark'];
   function applyTheme(t) {
     if (t === 'auto') document.documentElement.removeAttribute('data-theme');
     else document.documentElement.setAttribute('data-theme', t);
-    $('theme-btn').textContent = 'theme: ' + t;
+    $('theme-ic').setAttribute('href', '#i-' + t);
+    $('theme-btn').title = 'Theme: ' + t;
     $('theme-btn').setAttribute('aria-label', 'Theme: ' + t + '. Tap to change.');
-    // The browser chrome colour is part of the page on a phone in
-    // standalone mode; leaving it at the old value is a visible seam
-    // above the masthead.
     var probe = getComputedStyle(document.body).backgroundColor;
     var meta = $('theme-color');
     if (meta && probe) meta.setAttribute('content', probe);
@@ -1089,30 +999,21 @@
     applyTheme(theme);
   };
   if (window.matchMedia) {
-    // Re-stamp theme-color when the OS flips underneath an "auto" page.
     try {
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { applyTheme(theme); });
     } catch (e) { /* older Safari: no addEventListener on MediaQueryList */ }
   }
 
-  // ---------------------------------------------------------------------
-  // The sticky offset is a MEASUREMENT. Anything scrolled to must clear
-  // the bar, and the bar's height depends on the font the device actually
-  // resolved - which nothing in CSS can check.
   function measureBar() {
     var root = document.documentElement.style;
     var h = document.querySelector('.topbar').getBoundingClientRect().height;
-    if (h > 0) root.setProperty('--bar-h', Math.round(h) + 'px');
-    // The compose bar's height moves with the snippet row wrapping, the
-    // textarea being dragged taller, and the device's safe-area inset.
-    // Nothing in CSS can read it, so it is read here and written back.
+    var wide = window.matchMedia && window.matchMedia('(min-width: 960px)').matches;
+    if (h > 0) root.setProperty('--bar-h', (wide ? 0 : Math.round(h)) + 'px');
     var c = document.querySelector('.compose').getBoundingClientRect().height;
     if (c > 0) root.setProperty('--compose-h', Math.round(c) + 'px');
     refreshCues();
   }
 
-  // A row that scrolls sideways fades the edge it continues past. data-more
-  // is l, r or lr, and absent when everything fits.
   var cues = [];
   function scrollCue(el) {
     if (!el) return;
@@ -1126,9 +1027,6 @@
   }
   function refreshCues() { cues.forEach(function (f) { f(); }); }
 
-  // Engine, model and schedule sit behind one button. The dot on it says
-  // the selection is not the default, so a collapsed row cannot hide the
-  // fact that this message will go to a non-default model or run later.
   function syncOpts() {
     var e = $('engine'), m = $('model'), w = $('when');
     var parts = [e, m, w].map(function (s) { var o = s.options[s.selectedIndex]; return o ? o.textContent : ''; }).filter(Boolean);
@@ -1152,9 +1050,6 @@
   window.addEventListener('resize', measureBar);
   window.addEventListener('orientationchange', measureBar);
 
-  // ---------------------------------------------------------------------
-  // Views. A roving tabindex, so the switcher is one stop in the tab order
-  // and the arrows move within it.
   var VIEWS = ['now', 'replies', 'work', 'system'];
   var view = LS.get('view', 'now');
   if (VIEWS.indexOf(view) === -1) view = 'now';
@@ -1176,8 +1071,8 @@
   VIEWS.forEach(function (name) { $('tab-' + name).onclick = function () { setView(name); }; });
   document.querySelector('.rail').addEventListener('keydown', function (e) {
     var i = VIEWS.indexOf(view);
-    if (e.key === 'ArrowRight') { setView(VIEWS[(i + 1) % VIEWS.length], true); e.preventDefault(); }
-    if (e.key === 'ArrowLeft') { setView(VIEWS[(i + VIEWS.length - 1) % VIEWS.length], true); e.preventDefault(); }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { setView(VIEWS[(i + 1) % VIEWS.length], true); e.preventDefault(); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { setView(VIEWS[(i + VIEWS.length - 1) % VIEWS.length], true); e.preventDefault(); }
     if (e.key === 'Home') { setView(VIEWS[0], true); e.preventDefault(); }
     if (e.key === 'End') { setView(VIEWS[VIEWS.length - 1], true); e.preventDefault(); }
   });
@@ -1189,13 +1084,6 @@
     b.className = 'badge' + (text ? '' : ' hidden') + (kind ? ' ' + kind : '');
   }
 
-  // ---------------------------------------------------------------------
-  // Rendering
-  //
-  // Escape FIRST, then re-add a small fixed set of tags. Nothing else passes
-  // through, so a reply can never inject markup - which matters because the
-  // reply text is written by a language model that has been reading whatever
-  // it was pointed at.
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1279,15 +1167,9 @@
     return Math.round(s / 86400) + 'd ago';
   }
 
-  // ---------------------------------------------------------------------
-  // Speech: this thing gets checked one-handed while walking, and a
-  // four-paragraph reply is the case where a screen is the wrong device.
   var speaking = null;
   function speak(text, btn, reset) {
     if (!window.speechSynthesis) return;
-    // One utterance at a time, tracked globally - two replies reading over each
-    // other is unusable, and a button whose utterance was cancelled by another
-    // has to be able to find that out or it sits on "Stop" forever.
     var prev = speaking;
     if (prev) {
       speaking = null;
@@ -1295,8 +1177,6 @@
       if (prev.reset) prev.reset();
       if (prev.btn === btn) return;
     }
-    // URLs read out as forty characters of token, one at a time. Deleting them
-    // leaves a sentence that no longer makes sense, so they become "link".
     var u = new SpeechSynthesisUtterance(String(text).replace(/https?:\/\/\S+/g, 'link').replace(/\/artifacts\/\S+/g, 'link'));
     var mine = { btn: btn, reset: reset };
     u.onend = u.onerror = function () {
@@ -1309,11 +1189,6 @@
     speechSynthesis.speak(u);
   }
 
-  // ---------------------------------------------------------------------
-  // Screen wake lock. A run watched from a phone on a desk is exactly the
-  // case where the screen blanking loses the thing being watched, and the
-  // page has to re-acquire after a visibility change because the platform
-  // drops the lock whenever the tab is hidden.
   var wakeLock = null;
   function wakeWanted() { return LS.get('wake', false) && !!(health && health.activeRun); }
   function syncWakeLock() {
@@ -1327,9 +1202,6 @@
       wakeLock.release().catch(function () {}); wakeLock = null;
     }
   }
-
-  // ---------------------------------------------------------------------
-  // State the page holds
 
   var health = null;
   var lastSeq = {};
@@ -1370,8 +1242,9 @@
       ['version', h.version]
     ];
     $('status-kv').innerHTML = kv.map(function (p) {
-      return '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>';
+      return '<div class="' + (p[0] === 'workspace' ? 'wide' : '') + (p[1] === 'OFF' ? ' bad' : '') + '"><dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd></div>';
     }).join('');
+    $('idle-text').textContent = 'Nothing is running. ' + h.defaultEngine + ' picks up the next message you send.';
 
     renderRunBox(h.activeRun);
     renderFailed(h.lastFailed);
@@ -1379,13 +1252,9 @@
     renderHold(h.usageHold);
     syncWakeLock();
 
-    // Transcript: fetch only the delta, and only when the counter moved.
     var t = (h.transcript || {})[h.activeRun ? h.activeRun.engine : h.defaultEngine];
     if (t) {
       if (t.runId !== curRunId) {
-        // runId changed -> a new run -> start the sequence over. Starting each
-        // run at 0 instead would hand a phone still holding `since` from the
-        // last run the new run's lines as though it had seen them.
         curRunId = t.runId; steps = []; lastSeq.v = 0; lastLineSeq = 0;
       }
       if (t.seq > (lastSeq.v || 0)) fetchTranscript(h.activeRun ? h.activeRun.engine : h.defaultEngine);
@@ -1402,12 +1271,13 @@
     var box = $('run-box');
     if (!run) {
       box.classList.add('hidden');
-      // A leftover draft above a finished reply reads as part of it.
+      $('idle').classList.remove('hidden');
       $('run-draft').textContent = '';
       if (!pendingAsk) setBadge('now', '');
       return;
     }
     box.classList.remove('hidden');
+    $('idle').classList.add('hidden');
     if (!pendingAsk) setBadge('now', steps.length ? steps.length + ' steps' : 'run', 'live');
     $('run-what').textContent = run.thread + ' / ' + run.engine;
     $('run-msg').textContent = String(run.message || '').slice(0, 240);
@@ -1418,12 +1288,8 @@
     $('run-activity').textContent = run.activity || 'starting';
     $('run-kill').disabled = !!run.killRequested;
     $('run-kill').textContent = run.killRequested ? 'Stopping' : 'Stop';
-    // A canvas loop is not reachable from a stylesheet, and neither is a
-    // ticker the reader has asked to hold still.
     $('run-ticker').classList.toggle('hidden', prefersReducedMotion());
 
-    // Steering needs the same pre-tool hook the relay needs, so it reuses the
-    // relay flag rather than inventing a second per-engine capability field.
     var e = health && health.engines && health.engines.filter(function (x) { return x.name === run.engine; })[0];
     $('run-steer-row').classList.toggle('hidden', !(e && e.relay));
     var pending = (run.nudges || []).length;
@@ -1455,8 +1321,6 @@
         }
         $('steps-count').textContent = steps.length;
         $('steps-box').classList.toggle('hidden', !steps.length);
-        // textContent, never renderRich: half-rendered markdown mid-sentence
-        // looks like a rendering bug rather than a work in progress.
         $('run-draft').textContent = t.draft || '';
       }).catch(function () {})
       .then(function () {
@@ -1465,21 +1329,18 @@
       });
   }
 
-  // Built with textContent only: the command is whatever a run tried to
-  // execute, and must never be parsed as markup. Keyed on the id list so a
-  // health refresh does not rebuild the card under a finger mid-tap. null, not
-  // '': an empty list's key IS '', so a '' reset would skip the rebuild after
-  // the last Run again / Dismiss and leave the card up.
   var missedTapsKey = null;
+  var missedList = [];
   function renderMissedTaps(list) {
     var key = list.map(function (m) { return m.id; }).join(',');
     if (key === missedTapsKey) return;
     missedTapsKey = key;
+    missedList = list;
     var box = $('taps-list');
     box.innerHTML = '';
     $('taps').classList.toggle('hidden', !list.length);
     if (!list.length) return;
-    $('taps-title').textContent = 'needs your tap (' + list.length + ')';
+    $('taps-title').textContent = 'Needs your tap (' + list.length + ')';
     list.forEach(function (m) {
       var row = document.createElement('div');
       row.style.cssText = 'margin-top:var(--s-3);padding-top:var(--s-3);border-top:1px solid var(--line)';
@@ -1507,7 +1368,6 @@
     var label = btn.textContent;
     btn.disabled = true; btn.textContent = busy;
     post(endpoint, body).catch(function (e) {
-      // 404 is "already gone", which is what was wanted.
       if (!/404/.test(e.message)) throw e;
     }).then(function () { missedTapsKey = null; pollHealth(); })
       .catch(function () { btn.disabled = false; btn.textContent = label + ' failed - tap to try again'; });
@@ -1527,30 +1387,14 @@
     $('failed-msg').textContent = String(f.message).slice(0, 300);
   }
 
-  // ---------------------------------------------------------------------
-  // The approve/deny card.
-  //
-  // This is the one thing on the page that is BLOCKING something: a run is
-  // sitting still until it is answered. So unlike everything else here it
-  // is allowed to interrupt - it pulls the view over, marks the tab title
-  // (which is what a phone shows in its tab strip and app switcher), and
-  // optionally vibrates. All three stop the moment it is answered.
   var lastRenderedAskId = null;
   var pendingAsk = false;
   var BASE_TITLE = 'Halyard';
 
-  // The same options, built into whichever host asks: the full card on Now,
-  // or the strip above the input everywhere else. A free-text question has
-  // no buttons to mirror, so the strip only points at the card.
   function fillAskOpts(s, host, compact) {
     host.innerHTML = '';
     var scope = $('ask-scope');
     if (!compact) { scope.innerHTML = ''; scope.classList.add('hidden'); }
-    // Empty options is how a free-text question (halyard ask with no
-    // --options) is told apart from an approve/deny-shaped one. Falling
-    // through to a button default here would send the literal word "Approve"
-    // back as the answer to "which of these did you mean?", and the run would
-    // act on it.
     var tooLong = compact && (String(s.command || '').length > 80 || /\n/.test(String(s.command || '')));
     if (compact && (!s.options.length || tooLong)) {
       var open = document.createElement('button');
@@ -1623,10 +1467,12 @@
   };
   var askExpiresAt = 0;
   var askIsRelay = false;
+  var askTotal = 1;
   function tickAsk() {
     var el = $('ask-left');
     if (!el || !askExpiresAt) return;
     var left = Math.round((askExpiresAt - Date.now()) / 1000);
+    $('ask-bar').style.width = Math.max(0, Math.min(100, 100 * (askExpiresAt - Date.now()) / askTotal)) + '%';
     if (left <= 0) { el.textContent = askIsRelay ? 'Timed out - it was denied' : 'Timed out'; return; }
     el.textContent = (askIsRelay ? 'Denies itself in ' : 'Times out in ') + Math.floor(left / 60) + ':' + ('0' + (left % 60)).slice(-2);
   }
@@ -1646,17 +1492,10 @@
     }
     syncDockAsk();
     if (!pending) { lastRenderedAskId = null; askExpiresAt = 0; return; }
-    // The interval poll re-fires with the SAME still-pending question every
-    // few seconds. Rebuilding the card unconditionally is harmless for
-    // buttons, but for the free-text input below it wipes whatever the user
-    // is mid-typing - composing an answer one-handed taking longer than one
-    // poll cycle is the normal case this exists for, not an edge case. Every
-    // `/api/ask` call mints a fresh id, so the same id always means the same
-    // question/options/command - skipping the rebuild here is always safe.
     if (s.id === lastRenderedAskId) return;
     lastRenderedAskId = s.id;
     $('ask-q').textContent = s.question;
-    $('ask').querySelector('h2').textContent = s.pending > 1 ? 'needs your answer (1 of ' + s.pending + ')' : 'needs your answer';
+    $('ask').querySelector('h2').textContent = s.pending > 1 ? 'Needs your answer (1 of ' + s.pending + ')' : 'Needs your answer';
     $('ask-cmd').textContent = s.command;
     $('ask-cmd').classList.toggle('hidden', !s.command);
     var meta = $('ask-meta');
@@ -1677,6 +1516,8 @@
       meta.appendChild(left);
     }
     askExpiresAt = s.expiresAt || 0; askIsRelay = !!s.rule;
+    askTotal = Math.max(1, askExpiresAt - (s.at || Date.now()));
+    $('ask-bar').classList.toggle('hidden', !askExpiresAt);
     tickAsk();
     fillAskOpts(s, $('ask-opts'), false);
     $('dock-ask-q').textContent = s.question;
@@ -1685,13 +1526,6 @@
     fillAskOpts(s, $('dock-ask-opts'), true);
   }
 
-  // ---------------------------------------------------------------------
-  // Pinning: a lightweight SNAPSHOT taken at pin time, not just an id. Halyard
-  // already has a durable server-side archive (/api/messages), so unlike a
-  // reply-ring entry a pin does not need to survive by staying findable in it
-  // - it renders straight from what was saved here, so it is still there even
-  // if the archive is unreachable or the original entry has since been
-  // deleted.
   var prefs = {};
   var REACTIONS = ['\u{1F44D}', '❤️', '\u{1F602}', '\u{1F44E}'];
   function savePref(key, value) {
@@ -1721,8 +1555,6 @@
     repliesKey = null;
     renderPinned();
   }
-  // Newest first (pinToggle prepends), shown as one row until opened, so a
-  // pile of pins never pushes the latest reply down the page.
   function renderPinned() {
     var list = pinnedList();
     $('pinned-box').classList.toggle('hidden', !list.length);
@@ -1738,7 +1570,6 @@
     $('pinned-preview').firstChild.textContent = first;
     paintPinnedOpen();
   }
-  // Open or shut is this phone's choice and survives a reload; shut is the default.
   function paintPinnedOpen() {
     var open = !!LS.get('pinnedOpen', false);
     $('pinned-head').setAttribute('aria-expanded', String(open));
@@ -1752,9 +1583,6 @@
   $('pinned-head').addEventListener('click', togglePinnedOpen);
   $('pinned-preview').addEventListener('click', togglePinnedOpen);
 
-  // One builder for every reply-shaped thing on the page: the archive list,
-  // the pinned snapshots and the "latest reply" summary on Now. Three copies
-  // of this markup is how the three drift apart.
   function replyEl(n, opts) {
     opts = opts || {};
     var el = document.createElement('div');
@@ -1763,7 +1591,7 @@
     if (Number.isFinite(n.costUsd)) meta.push('$' + n.costUsd.toFixed(4));
     if (Number.isFinite(n.durationMs)) meta.push(Math.round(n.durationMs / 1000) + 's');
     el.innerHTML =
-      '<div class="meta">' + meta.map(esc).join('  ') + '</div>' +
+      '<div class="meta">' + meta.map(esc).join(' · ') + '</div>' +
       (n.prompt && !opts.pinnedOnly ? '<div class="prompt small">' + esc(n.prompt.slice(0, 200)) + '</div>' : '') +
       '<div class="text">' + renderRich(n.message) + '</div>';
     var metaEl = el.querySelector('.meta');
@@ -1797,16 +1625,16 @@
 
     var acts = document.createElement('div');
     acts.className = 'acts';
-    function act(label, fn) {
+    function act(label, fn, cls) {
       var b = document.createElement('button');
-      b.className = 'ghost sm'; b.textContent = label; b.onclick = function () { fn(b); };
+      b.className = 'ghost sm' + (cls ? ' ' + cls : ''); b.textContent = label; b.onclick = function () { fn(b); };
       acts.appendChild(b);
       return b;
     }
     if (opts.pinnedOnly) {
       act('Unpin', function () { pinToggle(n); });
     } else {
-      if (window.speechSynthesis) act('Read', function (b) { speak(n.message, b, function () { b.textContent = 'Read'; }); });
+      if (window.speechSynthesis) act('Read', function (b) { speak(n.message, b, function () { b.textContent = 'Read'; }); }, 'x');
       var rb = act('', function (b) {
         var c = (prefs.reactions || {})[n.id];
         var all = Object.assign({}, prefs.reactions || {});
@@ -1828,9 +1656,6 @@
           b.textContent = ok ? 'Copied' : 'Copy failed'; setTimeout(function () { b.textContent = 'Copy'; }, 1200);
         });
       });
-      // Native share exists on exactly the device this page is for, and is
-      // the only way to get a reply into another app one-handed. A browser
-      // without one gets a copy, and the button says so.
       act('Share', function (b) {
         var text = shareableText(n.message);
         if (navigator.share) {
@@ -1842,13 +1667,7 @@
         copyText(text).then(function (ok) {
           b.textContent = ok ? 'Copied instead' : 'Share failed'; setTimeout(function () { b.textContent = 'Share'; }, 1500);
         });
-      });
-      // Following up means continuing THIS thread, which is a different
-      // thing from whatever thread the compose box was last left on.
-      // thread() reads the SELECT before localStorage, so moving the stored
-      // value alone does nothing: if the reply's thread is not already an
-      // option the select never moves and the follow-up lands in whatever
-      // thread was there before. Add the option, then select it.
+      }, 'x');
       act('Follow up', function (b) {
         if (n.thread) {
           var sel = $('thread'), found = false;
@@ -1862,18 +1681,14 @@
           }
           sel.value = n.thread;
           LS.set('thread', n.thread);
-          // Assigning .value fires no change event, so the handler that
-          // refreshes the carried-context panel has to be called by hand.
           pollContext();
           renderConversation();
         }
         setView('now');
-        // From the Now view the card is already on the target view, so with
-        // no acknowledgement here the tap looks like it did nothing at all.
         b.textContent = n.thread ? 'In ' + n.thread : 'Composing';
         setTimeout(function () { b.textContent = 'Follow up'; }, 1400);
         $('msg').focus();
-      });
+      }, 'lead');
       var stepsEl = null;
       if (n.runId) act('Steps', function (b) {
         if (stepsEl) { stepsEl.open = !stepsEl.open; return; }
@@ -1893,7 +1708,7 @@
           b.disabled = false;
           toast(e.status === 404 ? 'The steps for that run are no longer stored.' : 'Could not load the steps: ' + e.message, { kind: e.status === 404 ? undefined : 'bad' });
         });
-      });
+      }, 'x');
       act('Delete', function () {
         el.classList.add('hidden');
         toast('Reply deleted.', {
@@ -1906,18 +1721,17 @@
               .catch(function (e) { el.classList.remove('hidden'); toast('Could not delete the reply: ' + e.message, { kind: 'bad' }); });
           }
         });
-      }).className = 'ghost sm destructive';
+      }).className = 'ghost sm destructive x';
+      act('More', function (b) {
+        var open = acts.classList.toggle('open');
+        b.textContent = open ? 'Less' : 'More';
+        b.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }, 'more').setAttribute('aria-expanded', 'false');
     }
     el.appendChild(acts);
     return el;
   }
 
-  // A reply as plain text to hand to another app. The run footer is Halyard's
-  // own bookkeeping, and links into this bridge (/artifacts, /secrets) carry
-  // the access token - pasted into a group chat they would hand the whole
-  // bridge to whoever reads it - so those keep only their label. Web links
-  // stay, as "label (url)", because the person receiving it needs somewhere to
-  // click. Exposed on window.halyardShareable so the test suite can pin it.
   function shareableText(md) {
     return String(md)
       .replace(/\n-{3,}\s*\n(?:Edited|Git:|\$|\d+s|\d+ turns|[\d.]+k context|Model:|Context|Transcript|Auto-shrink)[\s\S]*$/, '')
@@ -1934,8 +1748,6 @@
   }
   window.halyardShareable = shareableText;
 
-  // navigator.clipboard needs a secure context, which a tunnel's HTTPS gives;
-  // the textarea route is for a browser that still refuses.
   function copyText(text) {
     var fallback = function () {
       var ta = document.createElement('textarea');
@@ -1977,7 +1789,8 @@
   function renderConversation() {
     var t = thread();
     var mine = allReplies.filter(function (n) { return (n.thread || 'main') === t; }).slice(0, 10);
-    $('convo-title').textContent = 'conversation · ' + t;
+    $('convo-title').textContent = 'Conversation · ' + t;
+    $('msg').placeholder = 'Message the agent in ' + t;
     var box = $('convo');
     box.innerHTML = '';
     if (!mine.length) {
@@ -2006,41 +1819,10 @@
     });
   }
 
-  // ---------------------------------------------------------------------
-  // Spend.
-  //
-  // Two DIFFERENT questions, one panel: "which day" (a magnitude across a
-  // sequence) and "which thread" (a share between kinds). Nothing here is
-  // drawn twice - an earlier draft carried a sparkline above these bars,
-  // which was a second picture of the identical seven numbers and bought
-  // a band of dead space with it.
-  //
-  // Days take a SINGLE-HUE ramp: cost per day differs in position, not in
-  // kind, and a hue change across it would assert a difference that is not
-  // there. Threads take the CATEGORICAL set, because they genuinely are
-  // different kinds. Neither borrows a status ink.
-  //
-  // Both are inline bars rather than a canvas: this panel has to survive a
-  // printout and 7 rectangles do not need a GPU.
-
-  // Take colours ACROSS the whole ramp, not the first n - otherwise a
-  // 7-day week renders entirely inside the ramp's lightest quarter.
   function rampToken(i, n) {
     if (n < 2) return 'var(--seq-5)';
     return 'var(--seq-' + (1 + Math.round(i * 7 / (n - 1))) + ')';
   }
-  // Two encodings live on this one screen: a verdict ink (the amber run
-  // ticker, the coral ask badge, the green connection dot) and a series
-  // ink. Where that happens, the second set is drawn from the range
-  // furthest in hue from the first - otherwise an amber bar labelled
-  // "main" sits a thumb's width below an amber badge meaning "running",
-  // and both readings are available at once.
-  //
-  // So the categorical set is walked in an order that spends the hues a
-  // status could claim - amber (watch), coral (poor), teal (good) - last,
-  // by which point a chart has six series and a legend anyway. Cycling
-  // past eight is an ambiguity the label beside each bar resolves, not a
-  // false ordering.
   var CAT_ORDER = [1, 5, 6, 7, 8, 3, 2, 4];
   function catToken(i) { return 'var(--c-' + CAT_ORDER[i % 8] + ')'; }
 
@@ -2079,7 +1861,6 @@
       var threads = s.byThread || [];
       var dMax = Math.max.apply(null, days.map(function (d) { return d.costUsd; }).concat([0.0001]));
       var tMax = Math.max.apply(null, threads.map(function (t) { return t.costUsd; }).concat([0.0001]));
-      // The figure never appears without what it was measured over.
       var html =
         '<div class="figure">' +
           '<span class="value">$' + s.totalUsd.toFixed(2) + '</span>' +
@@ -2088,13 +1869,13 @@
             (health && health.spendGuard && health.spendGuard.dailyUsd > 0 && Number.isFinite(s.todayUsd)
               ? ' · today $' + s.todayUsd.toFixed(2) + ' of $' + health.spendGuard.dailyUsd.toFixed(2) : '') + '</span>' +
         '</div>' +
-        '<div class="tiny muted mono" style="margin-top:var(--s-3)">by day</div>' +
+        '<div class="sub-h" style="margin-bottom:var(--s-2)">By day</div>' +
         days.map(function (d, i) {
           return bar(d.day, d.costUsd, Math.round(100 * d.costUsd / dMax), rampToken(i, days.length));
         }).join('') +
         (all > days.length ? '<div class="tiny muted">Showing the latest 14 of ' + all + ' days.</div>' : '');
       if (threads.length) {
-        html += '<div class="tiny muted mono" style="margin-top:var(--s-3)">by thread</div>' +
+        html += '<div class="sub-h" style="margin-bottom:var(--s-2)">By thread</div>' +
           threads.map(function (t, i) {
             return bar(t.key, t.costUsd, Math.round(100 * t.costUsd / tMax), catToken(i));
           }).join('');
@@ -2102,7 +1883,7 @@
       var models = s.byModel || [];
       if (models.length) {
         var mMax = Math.max.apply(null, models.map(function (m) { return m.costUsd; }).concat([0.0001]));
-        html += '<div class="tiny muted mono" style="margin-top:var(--s-3)">by model</div>' +
+        html += '<div class="sub-h" style="margin-bottom:var(--s-2)">By model</div>' +
           models.map(function (m, i) {
             return bar(m.key === 'unknown' ? 'default model' : m.key, m.costUsd, Math.round(100 * m.costUsd / mMax), catToken(i));
           }).join('');
@@ -2110,11 +1891,6 @@
       $('spend').innerHTML = html;
     }).catch(function (e) { $('spend').innerHTML = '<div class="empty">Unavailable: ' + esc(e.message) + '</div>'; });
   }
-
-  // ---------------------------------------------------------------------
-  // Pollers. These are the SAME functions the change stream triggers - the
-  // stream only answers "has anything changed yet?", which is the part a timer
-  // answers badly. Every render path and payload shape stays as it was.
 
   function pollHealth() { return api('/api/health').then(function (h) { renderHealth(h); flushOutbox(); }).catch(connDown); }
   function pollState() { return api('/api/state').then(renderState).catch(function () {}); }
@@ -2133,10 +1909,6 @@
         var opts = r[0].items.map(function (t) {
           return '<option value="' + esc(t.name) + '"' + (t.name === cur ? ' selected' : '') + '>' + esc(t.name) + (t.hasContext ? ' *' : '') + '</option>';
         });
-        // A thread the server does not list - one just chosen with Follow up,
-        // or one whose runs have aged out of the index - has to survive this
-        // rewrite. Otherwise the selection silently snaps back to whatever
-        // happens to be first in the list and the next message goes there.
         if (cur && !r[0].items.some(function (t) { return t.name === cur; })) {
           opts.unshift('<option value="' + esc(cur) + '" selected>' + esc(cur) + '</option>');
         }
@@ -2154,12 +1926,10 @@
     return api('/api/artifacts').then(function (r) {
       $('artifacts').innerHTML = r.items.length ? r.items.map(function (a) {
         var href = '/artifacts/' + encodeURIComponent(a.name);
-        // Save is the untouched file as a download, so a copy kept on the
-        // phone works offline.
         return '<li><a class="grow small" href="' + href + '" target="_blank" rel="noopener">' + esc(a.name) + '</a>' +
           '<span class="tiny muted mono">' + Math.max(1, Math.round(a.size / 1024)) + ' kB</span>' +
           '<a class="ghost sm btn" href="' + href + '?download=1" download="' + esc(a.name) + '">Save</a></li>';
-      }).join('') : '<li class="empty">None.</li>';
+      }).join('') : '<li class="empty">No files yet. Anything the agent saves for you to open shows up here.</li>';
     }).catch(function () {});
   }
   function pollQueue() {
@@ -2167,7 +1937,7 @@
       var now = Date.now();
       var due = r.items.filter(function (i) { return !i.paused && (!i.runAfter || i.runAfter <= now); });
       $('queue-box').classList.toggle('hidden', !due.length);
-      $('queue-title').textContent = 'waiting (' + due.length + ')';
+      $('queue-title').textContent = 'Waiting (' + due.length + ')';
       $('queue').innerHTML = due.map(function (i, n) {
         return '<li class="stacked"><span class="small">' + esc(i.message.slice(0, 160)) + '</span>' +
           '<span class="when"><span class="tiny muted mono grow">' + esc(i.thread) + ' · ' + esc(i.engine) +
@@ -2186,7 +1956,6 @@
   function pollScheduled() {
     return api('/api/inbox/scheduled').then(function (r) {
       $('scheduled').innerHTML = r.items.length ? r.items.map(function (i) {
-        // Seconds are noise on something that fires tomorrow morning.
         var when = (i.paused ? 'paused · ' : '') + new Date(i.runAfter).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
         var id = esc(i.id);
         return '<li class="stacked"><span class="small">' + esc(i.message.slice(0, 120)) + '</span>' +
@@ -2194,7 +1963,7 @@
           (i.paused ? '<button class="ghost sm" data-resume="' + id + '">Resume</button>' : '<button class="ghost sm" data-pause="' + id + '">Pause</button>') +
           '<button class="ghost sm" data-now="' + id + '">Run now</button>' +
           '<button class="ghost sm" data-cancel="' + id + '">Cancel</button></span></li>';
-      }).join('') : '<li class="empty">None.</li>';
+      }).join('') : '<li class="empty">Nothing scheduled. To run a message later or on a repeat, open the send options beside the message box.</li>';
     }).catch(function () {});
   }
 
@@ -2240,6 +2009,7 @@
   function setConn(up) {
     var el = $('conn');
     el.className = 'conn ' + (up ? 'up' : 'down');
+    if (document.body.classList.contains('offline') === up) { document.body.classList.toggle('offline', !up); measureBar(); }
     $('conn-text').textContent = up
       ? (streamOk || !lastContact ? 'live' : 'polled ' + ago(lastContact))
       : 'offline';
@@ -2249,14 +2019,6 @@
     if (!lastContact) $('conn-text').textContent = 'offline - messages will be parked';
   }
 
-  // ---------------------------------------------------------------------
-  // The change stream, and the timers it replaces.
-  //
-  // It must degrade to the OLD behaviour, not to a frozen page. The original
-  // intervals are still wired; while the stream is connected they fire at a
-  // tenth of their rate as a backstop against a missed bump, and snap back to
-  // full speed the moment EventSource reports an error. A page that never
-  // connects behaves exactly as it did before any of this existed.
   var BASE_MS = { health: 4000, state: 3000, notifications: 6000, context: 20000, artifacts: 30000 };
   var streamOk = false;
   var timers = {};
@@ -2303,19 +2065,8 @@
     };
   }
 
-  // ---------------------------------------------------------------------
-  // Compose
-
   function thread() { return $('thread').value || LS.get('thread', 'main'); }
 
-  // The phone computes only the FIRST occurrence, because "07:00" means 07:00
-  // where the phone is and only the phone knows that. Everything after it is
-  // the server's job, which is what keeps a repeat firing when the page is
-  // closed.
-  // A datetime-local value is "YYYY-MM-DDTHH:mm" with no zone, and both
-  // Date.parse and the input itself read it as local time - so the value can
-  // be built from and handed back to a Date without any conversion, as long
-  // as it is never routed through toISOString (which would shift it to UTC).
   function localInputValue(d) {
     function p(n) { return (n < 10 ? '0' : '') + n; }
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
@@ -2328,8 +2079,6 @@
 
   function scheduleSpec(v) {
     if (!v) return {};
-    // One-off, so no repeat: a picked calendar date is by definition a date,
-    // not a pattern. The recurring options above remain the way to repeat.
     if (v === 'at') { var t = whenAtTime(); return isFinite(t) ? { runAfter: t } : {}; }
     if (v === '+1h') return { runAfter: Date.now() + 3600e3 };
     if (v === 'days') {
@@ -2352,20 +2101,13 @@
     return { runAfter: d.getTime(), repeat: m[1] || null };
   }
 
-  // Showing the picker changes the height of a fixed bar that the page pads
-  // itself against, so every path that toggles it has to re-measure or the
-  // last line of the view ends up underneath it.
   function syncWhen() {
     var on = $('when').value === 'at';
     $('when-at-row').classList.toggle('hidden', !on);
     $('when-days-row').classList.toggle('hidden', $('when').value !== 'days');
     if (on) {
-      // The browser will not stop a past date on its own, but min at least
-      // greys it out in the native picker rather than failing after the tap.
       $('when-at').min = localInputValue(new Date());
       if (!$('when-at').value) {
-        // Open somewhere useful rather than empty: an hour out, rounded up
-        // to the next five minutes.
         var d = new Date(Date.now() + 3600e3);
         d.setSeconds(0, 0);
         d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5);
@@ -2376,11 +2118,6 @@
     measureBar();
   }
 
-  // ---------------------------------------------------------------------
-  // Snippets: the handful of prompts that get sent over and over ("what
-  // broke overnight", "run the tests and summarise"). Typing one of those
-  // on a phone, one-handed, on a train, is the thing this app is worst at,
-  // so they are one tap and they live next to the box they fill.
   function snippets() { return prefs.snippets || LS.get('snippets', ['Status update, two lines', 'Run the tests and summarise failures', 'What changed since my last message?']); }
   var snipEdit = false;
   function renderSnips() {
@@ -2431,28 +2168,14 @@
     });
   }
 
-  // Draft autosave. A half-typed message lost to a backgrounded tab is the
-  // most annoying thing a phone app can do, and it costs one localStorage
-  // write per keystroke pause to never do it.
   var draftTimer = null;
   function saveDraft() {
     clearTimeout(draftTimer);
     draftTimer = setTimeout(function () { LS.set('draft', $('msg').value); }, 400);
   }
 
-  // ---------------------------------------------------------------------
-  // Outbox: this bridge is reached over a tunnel from a phone that is
-  // routinely out of coverage, and a send in that state used to just fail -
-  // the text stayed in the box and remembering to press Send again was the
-  // user's problem. A failed send is parked here and flushed automatically;
-  // `clientId` is what makes the flush safe to retry - the server answers a
-  // repeat with the id of the item it already created, so a lost RESPONSE
-  // (as opposed to a lost request) can never queue the same message twice.
   function newClientId() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
-  // The outbox used to be completely invisible: a parked message looked
-  // exactly like a message that was never written. The masthead now carries
-  // its depth whenever it is non-empty, and tapping it forces a flush.
   function renderOutbox() {
     var n = LS.get('outbox', []).length;
     var btn = $('outbox-btn');
@@ -2466,20 +2189,12 @@
     var box = LS.get('outbox', []);
     if (!box.length) return;
     var chain = Promise.resolve();
-    // Track what got RESOLVED (sent or genuinely refused) by clientId, and
-    // remove only those from a freshly-read outbox at the end - never
-    // overwrite wholesale. This chain can span several sequential round trips,
-    // and `online` + the next health poll routinely fire within the same
-    // second on reconnect; either that overlap or a fresh send() failure
-    // arriving mid-flush would otherwise get clobbered by a stale snapshot.
     var resolved = [];
     box.forEach(function (entry) {
       chain = chain.then(function () {
         return post('/api/inbox', entry.payload).then(function () {
           resolved.push(entry.payload.clientId);
         }).catch(function (e) {
-          // Only a network failure (no HTTP status at all) keeps it queued -
-          // a real refusal from the server is not something retrying fixes.
           if (e.status !== undefined) resolved.push(entry.payload.clientId);
         });
       });
@@ -2518,9 +2233,6 @@
   function send() {
     var text = $('msg').value.trim();
     if (!text) return;
-    // scheduleSpec falls back to {} on a value it cannot read, and {} means
-    // "run now" - so an unfilled or past picker would silently send instead
-    // of scheduling. Catch it here, where there is still someone to tell.
     if ($('when').value === 'at') {
       var at = whenAtTime();
       if (!isFinite(at)) { toast('Pick a date and time first.', { kind: 'bad' }); $('when-at').focus(); return; }
@@ -2551,9 +2263,6 @@
       growMsg();
     }).catch(function (e) {
       if (e.status === undefined) {
-        // No HTTP status at all means the request never reached the server -
-        // the phone is offline or the tunnel is down, not that the message
-        // was refused.
         var box = LS.get('outbox', []).concat([{ payload: payload, at: Date.now() }]).slice(-20);
         LS.set('outbox', box);
         renderOutbox();
@@ -2593,10 +2302,6 @@
     syncOpts();
   }
 
-  // ---------------------------------------------------------------------
-  // Push. Needs a secure context: over plain http the PushManager is simply
-  // absent, and the hint line says which tier is actually in force rather than
-  // leaving a button that does nothing.
   function pushState() {
     if (!('serviceWorker' in navigator)) return 'unsupported';
     if (!window.isSecureContext) return 'insecure';
@@ -2632,9 +2337,6 @@
     return Uint8Array.from(raw, function (c) { return c.charCodeAt(0); });
   }
 
-  // ---------------------------------------------------------------------
-  // Wiring
-
   $('send').onclick = send;
   $('msg').addEventListener('input', function () { saveDraft(); growMsg(); if (!window.ResizeObserver) measureBar(); });
   $('msg').addEventListener('keydown', function (e) {
@@ -2661,6 +2363,11 @@
 
   $('thread').onchange = function () { LS.set('thread', this.value); pollContext(); renderConversation(); };
   $('convo-all').onclick = function () { setView('replies'); };
+  $('handover').onclick = function () { this.classList.toggle('open'); };
+  $('taps-dismiss-all').onclick = function () {
+    Promise.all(missedList.map(function (m) { return post('/api/missed/dismiss', { id: m.id }).catch(function () {}); }))
+      .then(function () { missedTapsKey = null; pollHealth(); });
+  };
   $('thread-new').onclick = function () {
     sheet({ title: 'New thread', input: true, placeholder: 'letters, numbers and dashes', confirm: 'Create' }).then(function (name) {
       if (!name) return;
@@ -2789,9 +2496,6 @@
 
   function runSearch() {
     var q = $('search').value.trim();
-    // Merge, do not replace: the ring and the archive can each hold something
-    // the other does not, and an unreachable server has to say so rather than
-    // render as "no matches" - those are very different answers.
     Promise.all([
       api('/api/messages?limit=100&q=' + encodeURIComponent(q)).catch(function () { return null; }),
       api('/api/notifications').catch(function () { return { items: [] }; })
@@ -2853,8 +2557,6 @@
     }).catch(function (e) { box.innerHTML = '<li class="empty">search failed: ' + esc(e.message) + '</li>'; });
   };
 
-  // Read-only preview + delete-what-you-confirm, reusing the existing
-  // per-file DELETE route rather than growing a second deletion code path.
   $('art-prune-preview').onclick = function () {
     var days = Number($('art-prune-days').value) || 30;
     post('/api/artifacts/prune', { days: days }).then(function (r) {
@@ -2882,8 +2584,6 @@
     });
   };
 
-  // Desktop keyboard. Guarded on "is the reader typing", because a page
-  // whose number keys hijack a message is worse than one with no shortcuts.
   document.addEventListener('keydown', function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     var t = e.target, tag = (t && t.tagName) || '';
@@ -2894,12 +2594,6 @@
     if (e.key === 'c') { setView('now'); $('msg').focus(); e.preventDefault(); }
   });
 
-  // Service worker. REQUIRED_SW_VERSION and SW_VERSION are bumped together; the
-  // page pings the worker and warns when what answers is too old, which is what
-  // turns "silently running last month's worker" into a visible message. Note
-  // an old worker has no message handler and does not reply at all, so "no
-  // answer" and "old worker" look identical from here - a non-answer is never
-  // read as "no worker registered".
   var REQUIRED_SW_VERSION = 6;
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').then(function (reg) {
@@ -2932,11 +2626,6 @@
     syncWakeLock();
   });
 
-  // ---------------------------------------------------------------------
-  // Usage. On demand, then kept live every 3 minutes while the panel is open
-  // and the page is visible - so the number on screen is never a leftover from
-  // the last tap. Not faster: the endpoint behind it has answered 429 to
-  // heavier polling. A failed quiet refresh leaves the last good numbers up.
   function checkUsage(quiet) {
     var box = $('usage');
     if (!quiet) { $('usage-go').disabled = true; $('usage-go').textContent = 'Checking'; box.classList.remove('hidden'); box.innerHTML = '<div class="empty">Checking.</div>'; }
@@ -2967,9 +2656,6 @@
     checkUsage(true);
   }, 180000);
 
-  // ---------------------------------------------------------------------
-  // Share target. sw.js parked what another app shared; it becomes a DRAFT
-  // (plus an uploaded attachment), never a sent message.
   function pickUpShare() {
     var st = new URLSearchParams(location.search).get('shared');
     if (!st) return;
@@ -2999,12 +2685,9 @@
     }).catch(function () {});
   }
 
-  // ---------------------------------------------------------------------
-  // First-run tour. Three screens, once per device, dismissible at any point;
-  // System -> "Show the tour again" brings it back.
   var TOUR = [
-    ['Message your computer', 'Type at the bottom and press Send. The assistant on your computer does the work and its answer appears on Now and under Replies - even if you close this page.'],
-    ['You stay in charge', 'Before anything risky - publishing code, deleting folders, sending data out - your phone asks Approve or Deny. Nothing happens until you tap. Missed one? It waits under "needs your tap".'],
+    ['Message your computer', 'Type at the bottom and tap the arrow to send. The assistant on your computer does the work and its answer appears on Now and under Replies - even if you close this page.'],
+    ['You stay in charge', 'Before anything risky - publishing code, deleting folders, sending data out - your phone asks Approve or Deny. Nothing happens until you tap. Missed one? It waits under "Needs your tap".'],
     ['Keep going later', 'Threads keep separate conversations. Work holds files the assistant made, things scheduled for later, and what it has cost. System shows whether everything is healthy.']
   ];
   var tourAt = 0;
@@ -3025,7 +2708,6 @@
   window.halyardTour = function () { showTour(0); };
   $('tour-again').onclick = function () { showTour(0); };
 
-  // Kick off
   $('thread').innerHTML = '<option>' + esc(LS.get('thread', 'main')) + '</option>';
   $('msg').value = LS.get('draft', '');
   growMsg();
@@ -3043,9 +2725,6 @@
   setupPush();
   retime();
   connectStream();
-  // One second: the run elapsed time and the "last heard from" reading are
-  // both relative, and a clock that only advances when the server speaks
-  // makes a live page look frozen.
   setInterval(function () {
     if (document.hidden) return;
     tickElapsed();
