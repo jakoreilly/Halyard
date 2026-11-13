@@ -46,6 +46,8 @@ function layout(dataDir) {
     state: d('state.json'),
     pushKeys: d('push-keys.json'),
     pushSubs: d('push-subs.json'),
+    prefs: d('prefs.json'),
+    inbound: d('inbound'),
     log: d('halyard.log'),
     replies: d('replies.jsonl'),
     runs: d('runs.jsonl'),
@@ -54,6 +56,8 @@ function layout(dataDir) {
     threads: d('threads'),
     artifacts: d('artifacts'),
     uploads: d('uploads'),
+    // One file per finished run: its step list, readable from its reply.
+    runsDir: d('runs'),
     // Values the phone hands over outside the chat, and the outbox it collects
     // them from. Its own 0700 directory - see the secrets routes in server.js.
     secrets: d('secrets'),
@@ -65,7 +69,7 @@ function layout(dataDir) {
 // artifacts/ directory turns into a 404 on a link the model has already sent to
 // the phone, which reads as "the bridge is broken" rather than "not created yet".
 function ensure(paths) {
-  for (const key of ['root', 'lockDir', 'threads', 'artifacts', 'uploads']) {
+  for (const key of ['root', 'lockDir', 'threads', 'artifacts', 'uploads', 'runsDir']) {
     fs.mkdirSync(paths[key], { recursive: true });
   }
   // mode only applies on creation, and is ignored on Windows - where a folder in

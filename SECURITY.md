@@ -18,6 +18,7 @@ about which row of that table you are in.
 | An unattended run doing something irreversible | **Partly** | The approve/deny relay stops mutating git, recursive deletes and outbound data and asks your phone. It is a backstop, not a sandbox. |
 | An agent reading or writing outside its remit | **Partly** | The workspace is a single configured directory, passed to the agent as its allowed scope. Enforcement is the **agent's**, not Halyard's. |
 | Reading arbitrary files back over HTTP | **Yes** | The log route is an allow-list of names mapped to absolute paths, never a path from the query. Artifacts are containment-checked. Thread names are an allow-list of `[a-z0-9-]`. |
+| An artifact (agent-written HTML) acting as you | **Yes** | HTML and SVG artifacts are served with `Content-Security-Policy: sandbox`, so they run on an opaque origin with no cookie and cannot call the API. The page never puts the token in an artifact URL. Consequence: an artifact must be one self-contained file. |
 | A reply injecting markup into the page | **Yes** | The page escapes first, then re-adds a fixed set of tags. Nothing else survives. |
 | Your reply text being readable by a third party | **Yes**, for Web Push | RFC 8291 end-to-end encryption. The push service relays bytes it cannot read. *(The optional ntfy path does **not** do this — see below.)* |
 | A stolen token | **No** | A token is a bearer credential. Anyone holding it can queue work. `halyard token --rotate` is the response. |
@@ -110,6 +111,20 @@ matcher never reaches the script no matter what the script says. A tool missing 
 - A deny fails **that command**, not the whole run — the agent gets an error it can react to.
 - The hook never exits without emitting a decision first. An unhandled exception in a
   permission hook is not something to gamble on as an allow.
+
+### Approve for the rest of a run
+
+The full approval card on Now (never the strip above the message box, and never the
+lock-screen notification) can offer **Approve every `<rule>` command for the rest of this
+run**. One tap then answers every later question **from the same rule family, in the same
+run**, without asking. It is offered only for the families listed in `relay.runScopedRules`,
+which is `git` alone by default: a push can be undone, a recursive delete or an upload after
+reading untrusted content cannot. The configuration audit warns when anything else is
+listed. The grant is cleared when the run ends, fails, or another run starts, so it can
+never carry over. A question with no rule (`halyard ask`) can never widen anything. Each
+auto-approval is still logged in `halyard.log` and written into the run's steps as
+`auto-approved (<rule>): <command>`, so nothing it waved through is invisible. The hook
+itself is unchanged: it still allows only on the exact answer `Approve`.
 
 ### Engines without a hook
 
@@ -205,6 +220,7 @@ Everything is in your data directory:
 | `state.json` | queue + last 30 replies | |
 | `replies.jsonl` | **every reply, permanently** | the only durable copy |
 | `runs.jsonl` | per-run cost ledger | |
+| `runs/*.json` | each run's step list, including the commands it ran | newest 200 kept |
 | `threads/*.session` | agent session ids | |
 | `halyard.log` | request and run log | rotated at 8 MB |
 | `secrets/*` | values saved from the Secrets page | dir `0700`, files `0600` |
@@ -241,6 +257,28 @@ exists so that never has to happen.
 What this does **not** do: stop an agent that has read a secret from printing it. That is
 the model's instructions and your permission rules, not something Halyard can enforce. The
 page protects the hand-over, not the use.
+
+---
+
+## Inbound tokens
+
+`halyard inbound-token <name>` creates a second kind of token for a script or CI job.
+
+- **What it can do.** One thing: `POST /api/inbox`, to queue a message. Every other route,
+  method and path, including `GET /api/inbox`, answers 401 exactly as for no token.
+- **What is forced.** The message lands in a thread named after the token, marked
+  background, at the back of the queue, and is prefixed so the agent knows the text came
+  from an automated sender. `thread`, `engine`, `model`, `front`, `runAfter`, `repeat` and
+  `background` in the request body are ignored; only `message` is read.
+- **Limits.** 30 messages per hour per token, at most 20 tokens, 20,000 characters a message.
+- **Revoking.** `halyard inbound-token <name> --revoke` deletes the file; it stops working
+  on the next request. There are no inbound tokens until you create one.
+
+> The text an inbound token queues is untrusted, and it reaches the agent as a prompt.
+> The relay's "tainted egress" rule arms when a run *reads* untrusted content through a
+> tool; it does not know that the prompt itself was untrusted. Keep the relay enabled
+> for any install that has inbound tokens, and do not create one for a sender you would
+> not let write to the agent.
 
 ---
 

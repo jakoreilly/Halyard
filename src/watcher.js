@@ -27,12 +27,13 @@
 //      the process by hand. Both stdout and stderr get the same bound, because
 //      fixing only stdout just moves the hang one line down.
 
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const { parserFor, newResult } = require('./engines');
 const lock = require('./lock');
+const { workspaceFor } = require('./config');
 const threads = require('./threads');
 const router = require('./router');
 const prunemod = require('./prune');
@@ -294,12 +295,12 @@ function runAgent(opts) {
 // ---------------------------------------------------------------------------
 // Prompt assembly
 
-function buildPrompt({ item, thread, engine, cfg, secretsDir, routingNote }) {
+function buildPrompt({ item, thread, engine, cfg, secretsDir, routingNote, workspace }) {
   const parts = [];
   parts.push(
     'You are answering a message sent from a phone through Halyard, a local bridge to this machine.',
     '',
-    `Working directory: ${cfg.workspace}`,
+    `Working directory: ${workspace || cfg.workspace}`,
     `Permission mode: ${cfg.permissionMode}`,
     cfg.relay && cfg.relay.enabled && engine.supportsRelayHook
       ? 'Mutating git commands, recursive deletes and outbound network calls are relayed to the phone for an approve/deny tap before they run. Use them normally; expect one pause.'
@@ -405,12 +406,87 @@ function decideReroute({ item, cfg, engineName, result }) {
 // ---------------------------------------------------------------------------
 // One turn
 
+// One post in flight at a time, in order. The updates used to be fired and
+// forgotten: two of them racing could arrive out of order and leave an older
+// draft on the phone, and every tool call cost a request of its own. Labels
+// are never dropped (each is a transcript line); the draft is latest-wins.
+function activitySender(post) {
+  let labels = [];
+  let draft;
+  let busy = false;
+  async function pump() {
+    busy = true;
+    while (labels.length || draft !== undefined) {
+      const body = { activities: labels, draft };
+      labels = [];
+      draft = undefined;
+      await post(body);
+    }
+    busy = false;
+  }
+  return ({ activity, draft: d }) => {
+    if (activity) labels.push(activity);
+    if (d !== undefined) draft = d;
+    if (!busy) pump();
+  };
+}
+
+// A bounded, read-only git call. Resolves the output, or null for ANY failure:
+// not a repository, git not installed, too slow, too large. A diff is a
+// convenience and must never be the reason a reply is late or lost.
+function gitOut(args, cwd, { timeoutMs = 10000, maxBytes = 512 * 1024 } = {}) {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd, timeout: timeoutMs, maxBuffer: maxBytes, windowsHide: true },
+      (err, stdout) => resolve(err ? null : String(stdout)));
+  });
+}
+
+// The page for a diff. Everything from git is escaped: a filename or a line of
+// source is exactly the kind of text that contains markup.
+function diffHtml({ runId, thread, stat, patch, untracked }) {
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>Diff ${esc(runId)}</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:16px;max-width:1100px}pre{font:12.5px/1.45 ui-monospace,Consolas,monospace;overflow-x:auto;white-space:pre}h1{font-size:18px;font-weight:600}h2{font-size:13px;font-weight:500;opacity:.7}</style>
+</head><body><main>
+<h1>Changes from the run in ${esc(thread)}</h1>
+<h2>summary</h2><pre>${esc(stat || '(no tracked changes)')}</pre>
+${untracked.length ? `<h2>new files, not yet tracked</h2><pre>${esc(untracked.join('\n'))}</pre>` : ''}
+<h2>patch</h2><pre>${esc(patch || '(empty)')}</pre>
+</main></body></html>`;
+}
+
+// Returns a footer note, or null. Never throws.
+async function writeDiff({ cfg, paths, runId, thread, headBefore, workspace }) {
+  const d = cfg.diff || {};
+  if (!d.enabled || !headBefore) return null;
+  try {
+    const opts = { timeoutMs: d.timeoutMs, maxBytes: d.maxBytes };
+    const stat = await gitOut(['diff', '--no-color', '--stat', headBefore], workspace, opts);
+    const patch = await gitOut(['diff', '--no-color', headBefore], workspace, opts);
+    const status = await gitOut(['status', '--porcelain'], workspace, opts);
+    const untracked = String(status || '').split('\n').filter((l) => l.startsWith('?? ')).map((l) => l.slice(3));
+    if (stat === null) return null;
+    if (patch === null) return 'Diff too large to attach.';
+    if (!patch.trim() && !untracked.length) return null;
+    const name = `diff-${runId}.html`;
+    fs.writeFileSync(path.join(paths.artifacts, name), diffHtml({ runId, thread, stat, patch, untracked }));
+    return `Diff: /artifacts/${name}`;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function processOne(ctx, item) {
   const { cfg, client, paths, log } = ctx;
   const engineName = cfg.engines[item.engine] ? item.engine : cfg.defaultEngine;
   const engine = cfg.engines[engineName];
   const thread = threads.read(paths, item.thread);
-  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // Per-thread directory (config only: it is the boundary of what the agent may
+  // touch). Every use below - prompt, args, cwd, shrink, diff - takes this one
+  // value, so a run cannot be told one directory and started in another.
+  const workspace = workspaceFor(cfg, thread.name);
+  const runId =`${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // Auto and the background model are resolved here, once, so the run box, the
   // --model flag and the reply's metadata all name the same model.
@@ -423,7 +499,7 @@ async function processOne(ctx, item) {
 
   const result = newResult();
   const routingNote = route.auto && route.auto.tier === 'light' ? router.escalateNote(route.auto.light) : '';
-  let prompt = buildPrompt({ item, thread, engine, cfg, secretsDir: paths.secrets, routingNote });
+  let prompt = buildPrompt({ item, thread, engine, cfg, secretsDir: paths.secrets, routingNote, workspace });
 
   // Resolved once per run, not once per turn: a resume is the same binary, and
   // re-running the filesystem probes on every retry would only add ways for a
@@ -433,6 +509,10 @@ async function processOne(ctx, item) {
   // phone is waiting on this message, and "the agent cannot be found, here is
   // why" is an answer it can act on - an unhandled rejection is not.
   const resolved = resolveCommand(engine.command);
+
+  // `post` is client.tryPost, which never rejects, so pump cannot throw and
+  // leave `busy` stuck. Do not swap in client.post.
+  const sendActivity = activitySender((body) => client.tryPost('/api/run/activity', { runId, engine: engineName, ...body }));
 
   const runWith = async (sessionId) => {
     if (!resolved.command) {
@@ -444,7 +524,7 @@ async function processOne(ctx, item) {
       return result;
     }
     const args = buildArgs(engine.args, {
-      workspace: cfg.workspace,
+      workspace,
       secrets: paths.secrets,
       permissionMode: cfg.permissionMode,
       model: (engine.modelMap && engine.modelMap[modelKey]) || modelKey || '',
@@ -454,7 +534,7 @@ async function processOne(ctx, item) {
     return runAgent({
       command: resolved.command,
       args,
-      cwd: cfg.workspace,
+      cwd: workspace,
       prompt,
       parse: parserFor(engine.stream),
       result,
@@ -462,18 +542,23 @@ async function processOne(ctx, item) {
       runTimeoutMs: cfg.runTimeoutMs,
       env: hookEnv({ cfg, paths, client }),
       log,
-      onActivity: ({ activity, draft }) => {
-        // Fire and forget. An activity update that fails to post costs one
-        // line on a status panel; awaiting it would let a slow round trip
-        // throttle the parse loop.
-        client.tryPost('/api/run/activity', { runId, engine: engineName, activity, draft });
-      },
+      // Not awaited by the parse loop: an activity update that fails to post
+      // costs one line on a status panel, and a slow round trip must not
+      // throttle parsing. The sender queues and batches instead.
+      onActivity: sendActivity,
       isKillRequested: async () => {
-        const health = await client.tryGet('/api/health');
-        return !!(health && health.activeRun && health.activeRun.killRequested);
+        const r = await client.tryGet('/api/run/kill');
+        return !!(r && r.killRequested);
       },
     });
   };
+
+  // The commit the workspace was on before the run, so the diff covers what the
+  // run committed as well as what it left uncommitted. null when the workspace
+  // is not a git repository, which simply means no diff.
+  const headBefore = cfg.diff && cfg.diff.enabled
+    ? ((await gitOut(['rev-parse', 'HEAD'], workspace, { timeoutMs: 5000 })) || '').trim() || null
+    : null;
 
   await runWith(thread.session);
 
@@ -508,7 +593,7 @@ async function processOne(ctx, item) {
     if (first.sessionId) {
       prompt = `The lighter model handed this turn up to you: ${escalated}. Take over now and handle the phone's message from the previous turn in full - the instructions in that turn still apply.`;
     } else {
-      prompt = buildPrompt({ item, thread, engine, cfg, secretsDir: paths.secrets });
+      prompt = buildPrompt({ item, thread, engine, cfg, secretsDir: paths.secrets, workspace });
     }
     Object.assign(result, newResult());
     await runWith(resumeFrom);
@@ -526,8 +611,13 @@ async function processOne(ctx, item) {
   // anyway (the handover is kept), so there is nothing to shrink. Never fails the
   // reply - the worst case is a note in the footer.
   if (result.sessionId && !result.killed && !result.timedOut) {
-    const note = longThread({ cfg, paths, threadName: thread.name, result, log });
+    const note = longThread({ cfg, paths, threadName: thread.name, result, log, workspace });
     if (note) result.notes = (result.notes || []).concat(note);
+  }
+
+  if (result.filesChanged.length && !result.killed && !result.timedOut) {
+    const diffNote = await writeDiff({ cfg, paths, runId, thread: thread.name, headBefore, workspace });
+    if (diffNote) result.notes = (result.notes || []).concat(diffNote);
   }
 
   if (result.killed) throw new Error('run cancelled from the phone');
@@ -578,6 +668,8 @@ async function processOne(ctx, item) {
       costUsd: result.costUsd,
       durationMs: result.durationMs,
       numTurns: result.numTurns,
+      // So the reply can open this run's stored steps (GET /api/run/history).
+      runId,
     });
   } catch (e) {
     // Logged in full so the answer is recoverable from halyard.log even though
@@ -596,7 +688,7 @@ async function processOne(ctx, item) {
 
 // The long-thread tiers, after a run that has a session. Returns a footer note
 // or null. [shrink] is injectable so the tests need no real CLI transcript.
-function longThread({ cfg, paths, threadName, result, log, shrink = prunemod.shrinkSession }) {
+function longThread({ cfg, paths, threadName, result, log, workspace, shrink = prunemod.shrinkSession }) {
   const c = cfg.context || {};
   const tokens = Number(result.contextTokens) || 0;
   if (!tokens) return null;
@@ -615,7 +707,7 @@ function longThread({ cfg, paths, threadName, result, log, shrink = prunemod.shr
   if (!(shrinkAt > 0 && tokens >= shrinkAt)) return null;
   try {
     const minPercent = Number.isFinite(Number(c.shrinkMinPercent)) ? Number(c.shrinkMinPercent) : 15;
-    const r = shrink(result.sessionId, cfg.workspace, { minPercent });
+    const r = shrink(result.sessionId, workspace || cfg.workspace, { minPercent });
     if (r.applied) {
       threads.writeSession(paths, threadName, r.newSessionId);
       log.info(`thread ${threadName}: transcript shrunk ${Math.round(r.savedPercent)}% into ${r.newSessionId} (was ${result.sessionId})`);
@@ -670,6 +762,43 @@ async function usageHeld(ctx) {
   return true;
 }
 
+// The spend guard. Same shape and same reasons as usageHeld: decides BEFORE the
+// pop, and fails open - spend unreadable means "go ahead".
+async function spendHeld(ctx) {
+  const { cfg, client, paths, log } = ctx;
+  const g = cfg.spendGuard || {};
+  const cap = Number(g.dailyUsd) || 0;
+  if (cap <= 0) return false;
+  const peek = await client.tryPost('/api/inbox/peek');
+  const item = peek && peek.item;
+  if (!item) return false;
+  const spend = await client.tryGet('/api/spend?days=1');
+  const today = spend && Number.isFinite(spend.todayUsd) ? spend.todayUsd : null;
+  const marker = path.join(paths.root, '.spend-hold');
+  if (today === null || today < cap) {
+    try { fs.unlinkSync(marker); } catch (e) { /* none */ }
+    return false;
+  }
+  const midnight = new Date();
+  midnight.setHours(24, 0, 0, 0);
+  await client.tryPost('/api/inbox/hold', {
+    id: item.id, gauge: 'daily spend', percent: Math.round((100 * today) / cap), resetsAt: midnight.toISOString(),
+  });
+  const every = Number(g.announceEveryMs) || 30 * 60 * 1000;
+  let last = 0;
+  try { last = fs.statSync(marker).mtimeMs; } catch (e) { /* first */ }
+  if (Date.now() - last >= every) {
+    await client.tryPost('/api/notify', {
+      message: `[halyard] spend guard: today has cost $${today.toFixed(2)} (limit $${cap.toFixed(2)}), so your message is staying queued instead of running. It starts by itself after midnight, or raise spendGuard.dailyUsd.`,
+      thread: item.thread || threads.DEFAULT_THREAD,
+      engine: item.engine || '',
+    });
+    try { fs.writeFileSync(marker, String(Date.now())); } catch (e) { /* best effort */ }
+    log.info(`spend guard holding ${item.id}: $${today.toFixed(2)} of $${cap.toFixed(2)}`);
+  }
+  return true;
+}
+
 // Retries a throwing post with a short backoff. Sized to ride out a server
 // restart (routine here - the agent is allowed to restart it), not an outage.
 // A 4xx is the server refusing this body, and sending it again changes nothing.
@@ -704,7 +833,7 @@ async function runOnce(ctx) {
   try {
     // Inside the try so the finally still releases the lock. Not consuming here
     // is what ends the loop's re-trigger chain while usage stays high.
-    if (await usageHeld(ctx)) return false;
+    if (await usageHeld(ctx) || await spendHeld(ctx)) return false;
     const popped = await client.post('/api/inbox/pop');
     item = popped && popped.item;
     if (!item) return false;
@@ -771,5 +900,5 @@ function startLoop(ctx) {
 
 module.exports = {
   runOnce, startLoop, runAgent, buildArgs, buildPrompt, splitHandover, changeFooter, decideReroute, CAPACITY_OR_AUTH,
-  hookEnv, postWithRetry, longThread, usageHeld,
+  hookEnv, postWithRetry, longThread, usageHeld, spendHeld, activitySender, gitOut, diffHtml, writeDiff,
 };

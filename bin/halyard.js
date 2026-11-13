@@ -22,17 +22,18 @@ const configmod = require('../src/config');
 const { createLogger } = require('../src/log');
 const { createServer } = require('../src/server');
 const { createClient } = require('../src/client');
+const { writeFileAtomic } = require('../src/atomic');
 const watcher = require('../src/watcher');
 const pushmod = require('../src/push');
 const lockmod = require('../src/lock');
 const { whichSync, resolveCommand } = require('../src/which');
 
+const setup = require('../src/setup');
+const qr = require('../src/qr');
+
 const pkg = require('../package.json');
 
-// Which tools reach hooks/permission-relay.js. Must cover every tool in its
-// RELAYED_TOOLS (shell tools) plus the read tools that taint a run - test/smoke.js
-// asserts the two agree.
-const RELAY_MATCHER = 'Bash|PowerShell|WebFetch|WebSearch|Read|mcp__.*';
+const { RELAY_MATCHER } = setup;
 
 // ---------------------------------------------------------------------------
 // Argument parsing. Deliberately tiny: --key value, --flag, and positionals.
@@ -123,7 +124,7 @@ function readPushSubs(paths) {
 }
 
 function writePushSubs(paths, subs) {
-  try { fs.writeFileSync(paths.pushSubs, JSON.stringify(subs)); } catch (e) { /* best effort */ }
+  try { writeFileAtomic(paths.pushSubs, JSON.stringify(subs)); } catch (e) { /* best effort */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -152,15 +153,98 @@ async function cmdSetup(argv) {
     fs.writeFileSync(paths.config, `${JSON.stringify(seed, null, 2)}\n`);
   }
 
-  console.log(`\n  Halyard ${pkg.version} is set up.\n`);
-  console.log(`  data dir   ${dataDir}`);
-  console.log(`  config     ${paths.config}`);
-  console.log(`  workspace  ${cfg.workspace}`);
-  console.log(`  engine     ${cfg.defaultEngine} (${cfg.engines[cfg.defaultEngine].command || 'not set'})`);
-  console.log(`\n  Start it:  halyard start`);
-  console.log(`  Open:      http://127.0.0.1:${cfg.port}/?token=${token}\n`);
-  console.log(`  Then read: halyard doctor      (checks, and what is risky)`);
-  console.log(`             halyard hook-config (wire up the approve/deny relay)\n`);
+  console.log(`\n  Halyard ${pkg.version}: your settings are in ${dataDir}\n`);
+
+  // The browser page is the easy path; the terminal steps are the same checks
+  // and the same fixes, for SSH sessions, headless boxes and anyone who asks.
+  if (!argv.flags['no-browser'] && setup.canOpenBrowser()) {
+    const boot = bootstrap(argv);
+    const srv = require('../src/setup-server').createSetupServer({
+      boot,
+      token,
+      deps: { installService: () => installService(boot, { register: true }) },
+    });
+    const url = await srv.listen();
+    const opened = setup.openBrowser(url);
+    console.log(opened ? '  The setup page is open in your browser.' : '  Open this in your browser to continue:');
+    console.log(`  ${url}\n`);
+    console.log('  (Press Finish on the page, or Ctrl+C here, when you are done.)\n');
+    await Promise.race([srv.waitDone(), new Promise((r) => process.once('SIGINT', r))]);
+    await srv.close();
+    console.log('\n  Setup finished. Run `halyard doctor` any time to re-check.\n');
+    return;
+  }
+  await terminalSetup(bootstrap(argv), token);
+}
+
+function askYesNo(question) {
+  if (!process.stdin.isTTY) return Promise.resolve(false);
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => rl.question(`  ${question} [y/N] `, (a) => { rl.close(); resolve(/^y(es)?$/i.test(a.trim())); }));
+}
+
+function printChecks(checks) {
+  for (const c of checks) {
+    console.log(`  ${c.ok ? '\u2713' : '\u2717'}  ${c.label}${c.detail ? `  (${c.detail})` : ''}`);
+    if (!c.ok && c.fix) console.log(`       Fix: ${c.fix}`);
+  }
+}
+
+async function terminalSetup(boot, token) {
+  const { cfg, paths } = boot;
+  const health = await createClient(cfg, token, { timeoutMs: 2000 }).tryGet('/api/health');
+  let checks = setup.runChecks({ cfg, paths, health });
+  printChecks(checks);
+  console.log('');
+  const failing = (id) => checks.some((c) => c.id === id && !c.ok);
+
+  if (failing('hooks')) {
+    const p = setup.previewHooks();
+    if (!p.ok) console.log(`  ${p.error}\n`);
+    else {
+      console.log(`  Approve/deny needs two lines in ${p.target}. This is the change (a backup is made first):\n`);
+      console.log(p.diff.split('\n').map((l) => `    ${l}`).join('\n'));
+      if (await askYesNo('Make this change?')) {
+        const r = setup.installHooks(p.target);
+        console.log(r.ok ? `  Done.${r.backup ? ` Old settings saved to ${r.backup}` : ''}\n` : `  ${r.error}\n`);
+      } else console.log('  Skipped. Run `halyard hook-config --install` later.\n');
+    }
+  }
+  if (failing('tunnel')) {
+    const ts = setup.tailscaleState(cfg.port);
+    if (ts.installed && ts.running) {
+      if (await askYesNo(`Turn on the Tailscale tunnel (runs: tailscale serve --bg ${cfg.port})?`)) {
+        const r = setup.tailscaleServe(cfg.port);
+        if (r.ok && r.url) {
+          writeConfigPatch(paths, { publicUrl: r.url });
+          cfg.publicUrl = r.url;
+        }
+        console.log(r.ok ? `  Done: ${r.url}  (undo: ${r.undo})\n` : `  ${r.error}\n`);
+      }
+    } else {
+      console.log(`  To reach this computer from your phone, install Tailscale on both and sign in: ${setup.TAILSCALE_DOWNLOAD}\n`);
+    }
+  }
+  if (!setup.serviceInstalled() && await askYesNo('Start Halyard by itself when you log in?')) {
+    const r = await installService(boot, { register: true });
+    console.log(r.ok ? `  Done. To undo: ${r.undo}\n` : `  ${r.error}\n`);
+  }
+
+  const ts = setup.tailscaleState(cfg.port);
+  const link = setup.pairingUrl(cfg, token, ts);
+  console.log('  Scan this with your phone camera (the link is private - treat it like a password):\n');
+  console.log(qr.toTerminal(qr.encode(link, { ecl: 'M' })));
+  console.log(`\n  ${link}\n`);
+  if (!health) console.log('  Then start it:  halyard start\n');
+  checks = setup.runChecks({ cfg, paths, health });
+  const left = checks.filter((c) => !c.ok).length;
+  console.log(left ? `  ${left} step(s) left - run \`halyard doctor\` for the fixes.\n` : '  All set.\n');
+}
+
+function writeConfigPatch(paths, patch) {
+  let cur = {};
+  try { cur = JSON.parse(fs.readFileSync(paths.config, 'utf8')); } catch (e) { cur = {}; }
+  fs.writeFileSync(paths.config, `${JSON.stringify({ ...cur, ...patch }, null, 2)}\n`);
 }
 
 function serverContext(boot, token) {
@@ -178,7 +262,10 @@ function serverContext(boot, token) {
     pushKeys: () => keys,
     pushSubs: () => subs,
     addPushSub: (sub) => {
-      subs = subs.filter((s) => s.endpoint !== sub.endpoint).concat(sub);
+      const prev = subs.find((s) => s.endpoint === sub.endpoint);
+      // Re-subscribing the same browser must not reset when it was first seen.
+      const merged = { ...sub, addedAt: (prev && prev.addedAt) || sub.addedAt || Date.now() };
+      subs = subs.filter((s) => s.endpoint !== sub.endpoint).concat(merged);
       writePushSubs(paths, subs);
     },
     removePushSub: (endpoint) => {
@@ -285,6 +372,16 @@ async function cmdDoctor(argv) {
   line('server', health ? `up  (${health.queued} queued, ${health.scheduled} scheduled)` : 'not reachable');
   if (health) line('push', `${health.push.subscribers} subscriber(s)`);
 
+  // One plain-English fix line per problem, the same checks the setup page
+  // shows - so "what do I do now" is answered here too.
+  const checks = setup.runChecks({ cfg, paths, health });
+  const problems = checks.filter((c) => !c.ok);
+  console.log(problems.length ? `\n  To fix (${problems.length})` : '\n  Setup steps: all done');
+  for (const c of problems) {
+    console.log(`  \u2717  ${c.label}${c.detail ? `  (${c.detail})` : ''}`);
+    console.log(`       Fix: ${c.fix}`);
+  }
+
   if (warnings.length || engineHints.length) {
     console.log('\n  Worth knowing');
     for (const w of warnings) console.log(`  ${w.level === 'warn' ? '!' : 'i'}  ${w.msg}`);
@@ -299,8 +396,41 @@ async function cmdToken(argv) {
   // A running server read its token once at start, so until it restarts it
   // accepts only the OLD one - the new link 401s and looks like rotation broke.
   if (argv.flags.rotate) console.error('  token rotated - restart halyard, then reopen the new link on every device\n');
+  if (argv.flags.qr) {
+    const link = setup.pairingUrl(boot.cfg, token, setup.tailscaleState(boot.cfg.port));
+    console.log(`\n${qr.toTerminal(qr.encode(link, { ecl: 'M' }))}\n\n  ${link}\n`);
+    if (/^http:\/\/127\./.test(link)) console.log('  (This link only works on this computer until a tunnel is set up - see `halyard setup`.)\n');
+    return;
+  }
   const host = boot.cfg.publicUrl || `http://127.0.0.1:${boot.cfg.port}`;
   console.log(argv.flags.url ? `${host}/?token=${token}` : token);
+}
+
+// Creates (or with --revoke, deletes) a token that can only queue a message.
+// Printed once; the file is 0600 in a 0700 directory, like a secret.
+async function cmdInboundToken(argv) {
+  const boot = bootstrap(argv);
+  const name = require('../src/threads').slug(argv._[1] || '');
+  if (!name) {
+    console.error('\n  usage: halyard inbound-token <name> [--revoke]\n');
+    process.exitCode = 1;
+    return;
+  }
+  const dir = boot.paths.inbound;
+  const file = path.join(dir, `${name}.token`);
+  if (argv.flags.revoke) {
+    try { fs.unlinkSync(file); console.log(`  inbound token "${name}" revoked`); }
+    catch (e) { console.error(`  no inbound token named "${name}"`); process.exitCode = 1; }
+    return;
+  }
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const t = crypto.randomBytes(24).toString('base64url');
+  fs.writeFileSync(file, t, { mode: 0o600 });
+  const host = boot.cfg.publicUrl || `http://127.0.0.1:${boot.cfg.port}`;
+  console.log(`\n  Inbound token "${name}" - it can queue a message and nothing else.`);
+  console.log(`  Messages land in the thread "${name}", marked as background.\n`);
+  console.log(`  curl -X POST "${host}/api/inbox" -H "Authorization: Bearer ${t}" \\`);
+  console.log(`       -H "content-type: application/json" -d '{"message":"the build on main failed"}'\n`);
 }
 
 // Prints the JSON to paste into the agent's hook configuration. Printed rather
@@ -309,33 +439,27 @@ async function cmdToken(argv) {
 // not hand out.
 async function cmdHookConfig(argv) {
   const boot = bootstrap(argv);
-  const relayHook = path.join(__dirname, '..', 'hooks', 'permission-relay.js');
-  const nudgeHook = path.join(__dirname, '..', 'hooks', 'nudge-inject.js');
-  const conf = {
-    hooks: {
-      PreToolUse: [
-        {
-          // MUST name every tool that can run a shell, not just Bash. A CLI
-          // that also ships a PowerShell tool lets a run walk around a
-          // Bash-only matcher entirely, and under a loosened permission mode
-          // "unrelayed" means "runs, unprompted". The read tools are here too
-          // (WebFetch, WebSearch, Read, MCP): reading untrusted content is
-          // what arms the relay's tainted-egress rule for the rest of the run.
-          matcher: RELAY_MATCHER,
-          hooks: [{ type: 'command', command: `node "${relayHook}"` }],
-        },
-        {
-          // `*`, not the relay's tool list: a run that only edits files makes
-          // no shell call and would otherwise never receive a steer from the
-          // phone. This one always passes through a call the relay matcher
-          // above would also see, so the two never fight over one call.
-          matcher: '*',
-          hooks: [{ type: 'command', command: `node "${nudgeHook}"` }],
-        },
-      ],
-    },
-  };
-  console.log(`\n  Paste into your agent's settings (for Claude Code: .claude/settings.json in ${boot.cfg.workspace}):\n`);
+  const target = argv.flags.target ? path.resolve(String(argv.flags.target)) : setup.claudeSettingsPath();
+  if (argv.flags.install) {
+    // Merged, never overwritten: every hook that is not Halyard's stays where
+    // it was, the old file is backed up first, and the change is shown before
+    // it is made.
+    const p = setup.previewHooks(target);
+    if (!p.ok) { console.error(`\n  ${p.error}\n`); process.exitCode = 1; return; }
+    if (!p.changed) { console.log(`\n  ${target} already has Halyard's hooks. Nothing to do.\n`); return; }
+    console.log(`\n  Change to ${target}:\n`);
+    console.log(p.diff.split('\n').map((l) => `    ${l}`).join('\n'));
+    if (!argv.flags.yes && !(await askYesNo('Make this change?'))) {
+      console.log('\n  Not changed. Re-run with --yes to skip this question.\n');
+      return;
+    }
+    const r = setup.installHooks(target);
+    console.log(`\n  Written.${r.backup ? ` Previous version: ${r.backup}` : ''}\n`);
+    return;
+  }
+  const conf = { hooks: { PreToolUse: setup.hookEntries() } };
+  console.log(`\n  Paste into your agent's settings (for Claude Code: ${target}),`);
+  console.log('  or let Halyard merge it in with a backup:  halyard hook-config --install\n');
   console.log(JSON.stringify(conf, null, 2));
   console.log(`\n  The matcher and the RELAYED_TOOLS set inside permission-relay.js must agree.`);
   console.log(`  A tool missing from the MATCHER never reaches the hook at all.`);
@@ -344,6 +468,7 @@ async function cmdHookConfig(argv) {
   console.log(`  at all - today that means Claude Code. Copilot and a plain CLI have no such`);
   console.log(`  mechanism, so "halyard doctor" and the phone both mark those engines as`);
   console.log(`  unable to be steered mid-run, same as they already do for the relay.\n`);
+  void boot;
 }
 
 // A genuine mid-run question, distinct from the approve/deny relay: for a fork
@@ -354,10 +479,8 @@ async function cmdHookConfig(argv) {
 //
 // The exit code is the contract, not stdout's mere presence: 0 answered (the
 // answer is the whole of stdout), 3 nobody answered in time, 4
-// unreachable/rejected, 5 the question was replaced by a later one before this
-// one was answered - there is only one slot, and if the run's own next tool
-// call raises a relay approval, that approval takes it and no answer to this
-// question is ever coming.
+// unreachable/rejected, 5 the bridge restarted and no longer holds the question,
+// so no answer to it is ever coming.
 async function cmdAsk(argv) {
   const boot = bootstrap(argv);
   const { cfg, paths } = boot;
@@ -381,10 +504,12 @@ async function cmdAsk(argv) {
     : [];
   const waitSec = Number(argv.flags.wait) || 240;
   const client = createClient(cfg, token, { timeoutMs: 10000 });
+  // The long-poll is held up to 25 s by the bridge, so it needs a longer limit.
+  const waitClient = createClient(cfg, token, { timeoutMs: 35000 });
 
   let id;
   try {
-    const res = await client.post('/api/ask', { question, command: '', options });
+    const res = await client.post('/api/ask', { question, command: '', options, timeoutMs: waitSec * 1000 });
     id = res.id;
   } catch (e) {
     console.error(`\n  halyard ask: could not reach the bridge (${e.message})\n`);
@@ -399,11 +524,16 @@ async function cmdAsk(argv) {
   // and process.exitCode do the work is already this file's own pattern.
   const deadline = Date.now() + waitSec * 1000;
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    const state = await client.tryGet('/api/state');
+    const asked = Date.now();
+    const state = await waitClient.tryGet(`/api/state?id=${encodeURIComponent(id)}&wait=25`);
+    // A bridge that ignored `wait` (or failed fast) answers at once; degrade to
+    // the old 3 s poll rather than spin.
+    if (Date.now() - asked < 1000 && (!state || state.status === 'pending')) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
     if (!state) continue;
-    if (state.id !== id) {
-      console.error('\n  halyard ask: the question was replaced by another one before it was answered\n');
+    if (state.status === 'gone') {
+      console.error('\n  halyard ask: the bridge restarted before the question was answered\n');
       process.exitCode = 5;
       return;
     }
@@ -416,40 +546,47 @@ async function cmdAsk(argv) {
   process.exitCode = 3;
 }
 
-async function cmdInstallService(argv) {
-  const boot = bootstrap(argv);
+// Writes the unit for this OS into the data dir and, with register, loads it.
+function writeServiceUnit(boot) {
   const { dataDir } = boot;
   const node = process.execPath;
   const entry = path.join(__dirname, 'halyard.js');
   const tmpl = path.join(__dirname, '..', 'scripts', 'service');
-
   const subs = { NODE: node, ENTRY: entry, DATA_DIR: dataDir, WORKDIR: boot.cfg.workspace, USER: os.userInfo().username };
   const fill = (s) => s.replace(/\{\{(\w+)\}\}/g, (_, k) => subs[k] || '');
-
   const which = process.platform === 'win32' ? 'windows.ps1'
     : process.platform === 'darwin' ? 'launchd.plist' : 'systemd.service';
-  const text = fill(fs.readFileSync(path.join(tmpl, which), 'utf8'));
   const outName = process.platform === 'win32' ? 'halyard-install-task.ps1'
     : process.platform === 'darwin' ? 'com.halyard.bridge.plist' : 'halyard.service';
   const out = path.join(dataDir, outName);
-  fs.writeFileSync(out, text);
+  fs.writeFileSync(out, fill(fs.readFileSync(path.join(tmpl, which), 'utf8')));
+  return out;
+}
 
-  console.log(`\n  Wrote ${out}\n`);
-  // Printed, never executed. Registering a background service is a system-wide,
-  // hard-to-reverse change, and it needs the user's own hands and their own
-  // idea of which init system they are actually using.
-  if (process.platform === 'win32') {
-    console.log('  Register it (an elevated shell is NOT required for a user task):');
-    console.log(`    powershell -ExecutionPolicy Bypass -File "${out}"\n`);
-  } else if (process.platform === 'darwin') {
-    console.log('  Register it:');
-    console.log(`    cp "${out}" ~/Library/LaunchAgents/`);
-    console.log('    launchctl load ~/Library/LaunchAgents/com.halyard.bridge.plist\n');
-  } else {
-    console.log('  Register it:');
-    console.log(`    mkdir -p ~/.config/systemd/user && cp "${out}" ~/.config/systemd/user/`);
-    console.log('    systemctl --user daemon-reload && systemctl --user enable --now halyard\n');
+async function installService(boot, { register = false } = {}) {
+  const out = writeServiceUnit(boot);
+  if (!register) return { ok: true, out, registered: false };
+  return { ...setup.registerService(process.platform, out), out, registered: true };
+}
+
+async function cmdInstallService(argv) {
+  const boot = bootstrap(argv);
+  // --register is the setup page's "Yes, start on login": the same unit,
+  // loaded for this user only. Without it the unit is written and the
+  // commands are printed, never run.
+  if (argv.flags.register) {
+    const r = await installService(boot, { register: true });
+    console.log(r.ok ? `\n  Halyard will start on login (${r.out}).\n  To undo: ${r.undo}\n` : `\n  ${r.error}\n`);
+    if (!r.ok) process.exitCode = 1;
+    return;
   }
+  const { out } = await installService(boot);
+  console.log(`\n  Wrote ${out}\n`);
+  const plan = setup.registerCommands(process.platform, out);
+  console.log('  Register it (or re-run with --register to have Halyard do it):');
+  if (plan.copyTo) console.log(`    mkdir -p "${path.dirname(plan.copyTo)}" && cp "${out}" "${plan.copyTo}"`);
+  for (const [cmd, args] of plan.cmds) console.log(`    ${cmd} ${args.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`);
+  console.log(`  Undo: ${plan.undo}\n`);
 }
 
 // Syntax gate for the page's inline script, so a broken UI cannot be committed.
@@ -475,17 +612,21 @@ function usage() {
   console.log(`
   halyard ${pkg.version} - drive a coding agent from your phone
 
-    halyard setup                 create config, token and push keys
+    halyard setup                 guided setup in your browser, with a tick per step
+      [--no-browser]               the same steps in this terminal
     halyard start                 server + watcher (the normal command)
     halyard serve                 server only
     halyard watch                 one watcher pass (for cron / systemd timer)
     halyard doctor                what is configured, reachable and risky
-    halyard token [--url]         print the token, or the full link
+    halyard token [--url|--qr]    print the token, the full link, or a QR code to scan
+    halyard inbound-token <name>  a token that can only queue a message [--revoke]
     halyard ask "<question>"      block and ask the phone a genuine question
       [--options "a|b"] [--wait 240]   (for the agent to run mid-turn, not you)
     halyard hook-config           agent hook config for the approve/deny relay
-                                   and the steer hook
+      [--install [--yes]]          and the steer hook; --install merges it into
+                                   your Claude settings, with a backup
     halyard install-service       write a service unit for this OS
+      [--register]                 and turn it on, so Halyard starts on login
 
   Common flags
     --data-dir <path>   where state lives (default: OS data dir)
@@ -507,6 +648,7 @@ async function main() {
     watch: cmdWatch,
     doctor: cmdDoctor,
     token: cmdToken,
+    'inbound-token': cmdInboundToken,
     ask: cmdAsk,
     'hook-config': cmdHookConfig,
     'install-service': cmdInstallService,
@@ -528,4 +670,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgv, whichSync, cliOverrides, cmdAsk, RELAY_MATCHER };
+module.exports = { parseArgv, whichSync, cliOverrides, cmdAsk, RELAY_MATCHER, writeServiceUnit };

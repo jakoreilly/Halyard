@@ -20,7 +20,7 @@
 //      individually with its own catch.
 //   3. SW_VERSION and the page's REQUIRED_SW_VERSION are bumped together.
 
-const SW_VERSION = 3;
+const SW_VERSION = 6;
 const CACHE = `halyard-shell-v${SW_VERSION}`;
 
 // Token-free URLs only. /manifest.json bakes the token into start_url and is
@@ -30,6 +30,13 @@ const SHELL_URLS = ['/icon.svg'];
 // redirects to. Never touched by the activate cleanup below, or a worker update
 // in between would eat a share in flight.
 const SHARE_CACHE = 'halyard-share';
+// The last page shell the network returned, kept so the app still opens with
+// no signal and can park a message in its outbox. Filled at RUNTIME from a
+// real navigation, never precached: the shell is behind the token, and a
+// precache entry that 401s is how an install used to fail (see the top of this
+// file). The key carries no token; the cached HTML contains none either.
+const PAGE_CACHE = 'halyard-page';
+const PAGE_KEY = '/__shell';
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -42,7 +49,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const names = await caches.keys();
-    await Promise.all(names.filter((n) => n !== CACHE && n !== SHARE_CACHE).map((n) => caches.delete(n)));
+    await Promise.all(names.filter((n) => n !== CACHE && n !== SHARE_CACHE && n !== PAGE_CACHE).map((n) => caches.delete(n)));
     await self.clients.claim();
   })());
 });
@@ -54,9 +61,34 @@ self.addEventListener('activate', (event) => {
 // up into the compose box - nothing is queued until the phone presses Send.
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (url.pathname === '/share' && event.request.method === 'POST') event.respondWith(receiveShare(event.request, url));
+  if (url.pathname === '/share' && event.request.method === 'POST') {
+    event.respondWith(receiveShare(event.request, url));
+    return;
+  }
+  if (event.request.mode === 'navigate' && (url.pathname === '/' || url.pathname === '/index.html')) {
+    event.respondWith(pageNetworkFirst(event.request));
+  }
   // Anything else is not intercepted at all - true network passthrough.
 });
+
+async function pageNetworkFirst(request) {
+  const cache = await caches.open(PAGE_CACHE);
+  try {
+    // Four seconds: a tunnel that is down often hangs rather than fails, and
+    // waiting out the browser's own timeout is a minute of white screen.
+    const res = await Promise.race([
+      fetch(request),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000)),
+    ]);
+    // Only a good shell is kept. A 401 page must never replace it.
+    if (res.ok) cache.put(PAGE_KEY, res.clone()).catch(() => {});
+    return res;
+  } catch (e) {
+    const hit = await cache.match(PAGE_KEY);
+    if (hit) return hit;
+    throw e;
+  }
+}
 
 async function receiveShare(request, url) {
   const back = (st) => Response.redirect(`/?token=${encodeURIComponent(url.searchParams.get('token') || '')}&shared=${st}`, 303);
@@ -98,21 +130,34 @@ self.addEventListener('push', (event) => {
   // sent for exactly this purpose never reached notificationclick, and every
   // tap with no tab open landed on the 401 page.
   //
-  // Built from the REAL options the caller gave `/api/ask` (up to 2 shown as
-  // buttons - most platforms cap notification actions there), never a
-  // hardcoded Approve/Deny. A free-text question passes an empty options array
-  // on purpose (see `halyard ask`), which is what falls through to the text
-  // box below rather than showing buttons that do not apply to it.
-  const askOptions = Array.isArray(payload.actions) ? payload.actions.filter(Boolean).slice(0, 2) : [];
-  const actions = payload.kind === 'ask' && askOptions.length
-    ? askOptions.map((label, i) => ({ action: `opt${i}`, title: String(label) }))
-    : [{ action: 'reply', title: 'Reply', type: 'text', placeholder: 'Reply…' }];
+  // Built from the REAL options the caller gave `/api/ask`, never a hardcoded
+  // Approve/Deny. A free-text question passes an empty options array on purpose
+  // (see `halyard ask`), which is what falls through to the text box below
+  // rather than showing buttons that do not apply to it.
+  //
+  // ONE button, never two. On a POCO phone (HyperOS, Chrome) every action button
+  // delivered the LAST action's id: tapping Approve sent "Deny", and tapping the
+  // left of two test options sent the right one (reproduced three times on the
+  // phone bridge Halyard grew from). A single button has nothing to collide with.
+  // The other options - Deny included - are in the page a body tap opens, and an
+  // approval left unanswered still denies on the relay's timeout. Don't go back
+  // to two buttons without re-testing on a real Android phone.
+  const askOptions = Array.isArray(payload.actions) ? payload.actions.filter(Boolean).slice(0, 1) : [];
+  // `review` means the command was too long for the notification body. Offering
+  // Approve there would be approving text that was cut off, so the notification
+  // carries no actions at all and a tap opens the page, where the whole command
+  // is on screen.
+  const actions = payload.review
+    ? []
+    : (payload.kind === 'ask' && askOptions.length
+      ? askOptions.map((label, i) => ({ action: `opt${i}`, title: String(label) }))
+      : [{ action: 'reply', title: 'Reply', type: 'text', placeholder: 'Reply…' }]);
 
   event.waitUntil(self.registration.showNotification(payload.title || 'Halyard', {
     body: payload.body || '',
     icon: '/icon.svg',
     badge: '/icon.svg',
-    tag: payload.kind === 'ask' ? 'halyard-ask' : `halyard-${payload.id || Date.now()}`,
+    tag: payload.kind === 'ask' ? `halyard-ask-${payload.id || Date.now()}` : `halyard-${payload.id || Date.now()}`,
     data: payload,
     // Platforms that support no actions (iOS) ignore this list and still show a
     // tappable notification - exactly the behaviour before actions existed.

@@ -621,6 +621,9 @@ async function main() {
         question: `A headless run wants to run a ${rule.label} (${input.tool_name}). Approve?`,
         command,
         options: ['Approve', 'Deny'],
+        timeoutMs: TIMEOUT_MS,
+        rule: rule.name,
+        cwd: input.cwd || null,
       }),
     });
     if (!askRes.ok) return decide('deny', 'bridge rejected the relay question');
@@ -631,19 +634,29 @@ async function main() {
   }
 
   const deadline = Date.now() + TIMEOUT_MS;
+  let why = 'no phone response within timeout';
   while (Date.now() < deadline) {
-    await sleep(POLL_MS);
+    const asked = Date.now();
     try {
-      const stateRes = await fetch(`${BASE}/api/state?token=${token}`, { signal: AbortSignal.timeout(10000) });
+      // By id: with several questions pending, the bare /api/state is somebody
+      // else's question as often as it is this one.
+      // wait=25 asks the bridge to hold the request until the answer arrives.
+      const stateRes = await fetch(`${BASE}/api/state?id=${encodeURIComponent(id)}&wait=25&token=${token}`, { signal: AbortSignal.timeout(35000) });
       const state = await stateRes.json();
-      if (state.id === id && state.status === 'answered') {
+      if (state.status === 'answered') {
         return state.answer === 'Approve'
           ? decide('allow', 'approved via phone relay')
           : decide('deny', 'denied via phone relay');
       }
+      // The bridge restarted and lost the question. Nobody can answer it now,
+      // so stop waiting out the rest of the timeout.
+      if (state.status === 'gone') { why = 'the bridge restarted before this was answered'; break; }
     } catch (e) {
       // transient poll failure, keep trying until deadline
     }
+    // A bridge that ignored `wait` (or failed fast) answers at once. Without
+    // this the loop would spin; with it, it degrades to the old 3 s poll.
+    if (Date.now() - asked < 1000) await sleep(POLL_MS);
   }
   // Recorded so the phone's "Needs your tap" card can offer it again later; a
   // timed-out push or merge otherwise just disappears. Best-effort, never blocks.
@@ -657,7 +670,7 @@ async function main() {
   } catch (e) {
     // bridge gone: the deny below still stands
   }
-  return decide('deny', 'no phone response within timeout');
+  return decide('deny', why);
 }
 
 // Guarded so test/smoke.js can require this file for MUTATING_GIT without the

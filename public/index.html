@@ -6,7 +6,10 @@
 <meta name="theme-color" content="#fbfbf9" id="theme-color">
 <meta name="color-scheme" content="light dark">
 <title>Halyard</title>
-<link rel="manifest" href="/manifest.json">
+<!-- use-credentials: a manifest is fetched WITHOUT cookies by default, so the
+     token cookie never went with it, the route answered 401, and the app
+     manifest (install, share target) never loaded. -->
+<link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <style>
   /* ===================================================================
@@ -254,6 +257,15 @@
   button.danger { color: var(--poor); border-color: var(--line); background: transparent; }
   button:disabled { opacity: .45; cursor: default; }
   button.sm { padding: 5px 9px; font-size: 12.5px; }
+  /* First-run tour: three screens, dismissible, shown once per device. */
+  .tour { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.45); display: grid; place-items: end center; padding: var(--s-4, 16px); }
+  .tour.hidden { display: none; }
+  .tour-card { background: var(--panel, var(--bg)); color: inherit; border: 1px solid var(--line); border-radius: 16px; padding: 20px; width: min(100%, 26rem); box-shadow: 0 10px 40px rgba(0,0,0,.25); margin-bottom: 12vh; }
+  .tour-card h3 { margin: 0 0 6px; font-size: 18px; }
+  .tour-card p { margin: 0 0 14px; color: var(--sub); }
+  .tour-dots { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tour-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+  .tour-dots i.on { background: currentColor; }
   /* A link that has to look like a button (the artifact Save download). */
   a.btn { display: inline-block; text-decoration: none; color: inherit; border: 1px solid var(--line); border-radius: var(--r-md); padding: 5px 9px; font-size: 12.5px; }
   /* The live run's model, beside what it is running. */
@@ -322,6 +334,21 @@
   .reply .meta { display: flex; gap: var(--s-2); align-items: center; font: 400 11.5px/1.4 var(--mono-face); color: var(--sub); margin-bottom: 6px; flex-wrap: wrap; }
   .reply .text { white-space: pre-wrap; overflow-wrap: anywhere; }
   .reply .text code { background: var(--panel-2); padding: .1em .35em; border-radius: var(--r-sm); font-family: var(--mono-face); font-size: .92em; }
+  .reply .text p { margin: 0 0 var(--s-2); }
+  .reply .text p:last-child { margin-bottom: 0; }
+  .reply .text pre.code {
+    margin: var(--s-2) 0; padding: var(--s-2) var(--s-3); overflow-x: auto; white-space: pre;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-md);
+    font: 12.5px/1.5 var(--mono-face);
+  }
+  .reply .text pre.code code { background: none; padding: 0; font-size: inherit; }
+  .reply .text .md-h { font-weight: 600; margin: var(--s-3) 0 var(--s-1); }
+  .reply .text .md-l { margin: 0 0 var(--s-2); padding-left: 1.4em; white-space: normal; }
+  .reply .text .md-l li { margin-bottom: 2px; }
+  .reply .text .md-q { border-left: 2px solid var(--hair); padding-left: var(--s-2); color: var(--ink-2); margin: 0 0 var(--s-2); }
+  .reply .text .md-hr { border: 0; border-top: 1px solid var(--rule); margin: var(--s-3) 0; }
+  /* A reply that runs past a screen is cut, and says so with a button. */
+  .reply .text.clamp { max-height: 30em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 3em), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 3em), transparent); }
   /* What was sent reads as the reader's own turn: a bubble at the top and
      on the right, with the answer below it on the left. */
   .reply .prompt {
@@ -335,6 +362,23 @@
   .reply .acts .destructive { margin-left: auto; }
   .reply.internal .text { color: var(--sub); }
   .reply.pinned { border-left-color: var(--hair); }
+  /* Collapsed by default, so a pile of pins is one row and never pushes the
+     latest reply down the page. The heading is the toggle; the preview is the
+     newest pin's first line. */
+  #pinned-head {
+    all: unset; box-sizing: border-box; width: 100%; min-height: 44px; cursor: pointer;
+    display: flex; align-items: center; gap: var(--s-2);
+  }
+  #pinned-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  #pinned-head .chev { margin-left: auto; transition: transform 180ms ease; }
+  #pinned-head[aria-expanded='true'] .chev { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) { #pinned-head .chev { transition: none; } }
+  #pinned-preview {
+    font-size: 13.5px; color: var(--ink-2); cursor: pointer; min-height: 44px;
+    display: flex; align-items: center; padding: 0 var(--s-2);
+    border-left: 2px solid var(--hair); overflow: hidden;
+  }
+  #pinned-preview span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   @media (hover: hover) and (pointer: fine) {
     /* An edge as well as a fill: on a long list the fill alone is easy to
        lose when the pointer is out at the right-hand edge. */
@@ -354,7 +398,7 @@
     .compose { backdrop-filter: blur(16px) saturate(140%); }
   }
   .compose .inner { max-width: 780px; margin: 0 auto; display: flex; gap: var(--s-2); align-items: flex-end; }
-  .compose textarea { min-height: 42px; max-height: 38vh; }
+  .compose textarea { min-height: 42px; max-height: 38vh; resize: none; overflow-y: auto; }
   .compose button.primary { height: 42px; padding: 0 16px; flex: none; }
   .compose select { font-size: 12px; padding: 5px 20px 5px 7px; }
   .snips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
@@ -454,12 +498,61 @@
   .kv dt { color: var(--sub); }
   .kv dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
   .empty { color: var(--sub); font-size: 13.5px; padding: var(--s-3) 0; }
+  mark { background: var(--accent-dim); color: inherit; border-radius: var(--r-sm); padding: 0 1px; }
+
+  /* --- toast and sheet ----------------------------------------------------
+     A native alert/confirm blocks the page, shows the origin instead of the
+     app, and cannot carry an Undo. A toast reports; a sheet asks. */
+  .toasts {
+    position: fixed; left: 0; right: 0; z-index: 60;
+    bottom: calc(var(--compose-h) + var(--s-2));
+    display: flex; flex-direction: column; align-items: center; gap: var(--s-2);
+    padding: 0 var(--s-4); pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto; width: 100%; max-width: 560px;
+    display: flex; gap: var(--s-2); align-items: center;
+    background: var(--panel-2); border: 1px solid var(--hair);
+    border-left: 3px solid var(--unknown); border-radius: var(--r-lg);
+    padding: var(--s-2) var(--s-3); box-shadow: var(--shadow); font-size: 13.5px;
+  }
+  .toast.ok { border-left-color: var(--good); }
+  .toast.bad { border-left-color: var(--poor); }
+  .scrim {
+    position: fixed; inset: 0; z-index: 70; background: var(--glass);
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  @supports (backdrop-filter: blur(10px)) { .scrim { backdrop-filter: blur(6px); } }
+  .sheet {
+    width: 100%; max-width: 560px; background: var(--bg);
+    border: 1px solid var(--hair); border-radius: var(--r-xl) var(--r-xl) 0 0;
+    padding: var(--s-4); padding-bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px));
+    box-shadow: var(--shadow);
+  }
+  @media (min-width: 560px) { .scrim { align-items: center; } .sheet { border-radius: var(--r-xl); } }
+  .sheet h3 { margin: 0 0 var(--s-2); font-size: 16px; font-weight: 600; }
+  .sheet input { width: 100%; margin-top: var(--s-2); }
+  .sheet .sheet-acts { display: flex; gap: var(--s-2); justify-content: flex-end; margin-top: var(--s-4); }
 
   /* A canvas loop is not reachable from a stylesheet, so the JS honours
      this too - see prefersReducedMotion() below. */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
     .ticker > i { width: 100%; animation: none; }
+  }
+
+  /* --- touch ------------------------------------------------------------
+     Safari on iOS zooms the viewport when a focused field is under 16px and
+     never zooms back, so every tap on the message box rescaled the page. The
+     selectors are listed out because `.small`, `.tiny` and `.compose select`
+     each beat a bare `input` on specificity. */
+  @media (pointer: coarse) {
+    input, textarea, select,
+    input.small, input.tiny, select.small, .compose select, .compose textarea { font-size: 16px; }
+    /* 28px is under a fingertip. */
+    button.sm, a.btn { min-height: 40px; padding: 8px 12px; font-size: 13.5px; }
+    .rail .badge, .reply .meta { font-size: 12px; }
+    .snip { min-height: 36px; padding: 6px 12px; font-size: 13.5px; }
   }
 
   /* --- print is a third theme, not an afterthought --------------------
@@ -483,7 +576,7 @@
       --c-5: #5a3f8f; --c-6: #125f79; --c-7: #8c3367; --c-8: #4f621b;
     }
     body { padding: 0; max-width: none; }
-    .topbar, .compose, .rail, .acts, #run-steer-row, .dock-ask { display: none !important; }
+    .toasts, .scrim, .topbar, .compose, .rail, .acts, #run-steer-row, .dock-ask { display: none !important; }
     /* Every view prints; the switcher is a screen affordance only. */
     .view { display: block !important; }
     .view::before { content: attr(data-title); display: block; font: 400 11px var(--mono-face); color: #555; margin: 18px 0 6px; }
@@ -501,6 +594,7 @@
 </style>
 </head>
 <body>
+<div class="toasts" id="toasts" aria-live="polite"></div>
 
 <div class="topbar">
   <div class="masthead">
@@ -523,14 +617,17 @@
 <!-- =====================================================================
      NOW - what is happening, and anything that is waiting on the reader.
      ===================================================================== -->
-<main class="view" id="view-now" role="tabpanel" aria-labelledby="tab-now" data-title="Now">
+<main>
+<div class="view" id="view-now" role="tabpanel" aria-labelledby="tab-now" data-title="Now">
 
   <section id="ask" class="hidden">
     <h2>needs your answer</h2>
     <div class="card tone ask">
       <div id="ask-q"></div>
+      <div class="row tiny muted mono" id="ask-meta" style="margin-top:var(--s-2)"></div>
       <div class="cmd mono" id="ask-cmd"></div>
       <div class="row" id="ask-opts"></div>
+      <div class="stack hidden" id="ask-scope" style="margin-top:var(--s-2)"></div>
     </div>
   </section>
 
@@ -542,6 +639,7 @@
         <span class="chip tiny mono hidden" id="run-model" title="Model this run is on"></span>
         <button class="danger sm" id="run-kill">Stop</button>
       </div>
+      <div class="small" id="run-msg" style="margin-top:var(--s-2);overflow-wrap:anywhere"></div>
       <div class="ticker" id="run-ticker"><i></i></div>
       <div class="small muted" id="run-activity"></div>
       <div class="small" id="run-draft"></div>
@@ -551,6 +649,11 @@
       </div>
       <div class="tiny muted" id="run-steer-note" style="margin-top:6px"></div>
     </div>
+  </section>
+
+  <section id="queue-box" class="hidden">
+    <h2><span id="queue-title">waiting</span></h2>
+    <ul class="plain" id="queue"></ul>
   </section>
 
   <!-- Deliberately OUTSIDE the run card, so it survives the run ending. -->
@@ -572,7 +675,7 @@
   </section>
 
   <section id="hold" class="hidden">
-    <h2>held by the usage guard</h2>
+    <h2>held by a guard</h2>
     <div class="card tone run"><div class="small" id="hold-text"></div></div>
   </section>
 
@@ -597,24 +700,26 @@
         <button class="ghost sm" id="thread-clear">Clear context</button>
       </div>
       <div class="small muted" id="handover"></div>
+      <div class="tiny muted mono" id="thread-ws" style="overflow-wrap:anywhere"></div>
     </div>
   </section>
 
   <section id="pinned-box" class="hidden">
-    <h2>pinned</h2>
-    <div id="pinned"></div>
+    <h2><button type="button" id="pinned-head" aria-expanded="false" aria-controls="pinned">pinned <span id="pinned-count"></span><span class="chev" aria-hidden="true">▸</span></button></h2>
+    <div id="pinned-preview" title="Newest pin - tap to show all"><span></span></div>
+    <div id="pinned" class="hidden"></div>
   </section>
 
-  <section id="latest-box" class="hidden">
-    <h2>latest reply</h2>
-    <div id="latest"></div>
+  <section id="convo-box">
+    <h2><span id="convo-title">conversation</span><span class="sp grow"></span><button class="ghost sm" id="convo-all">All replies</button></h2>
+    <div id="convo"></div>
   </section>
-</main>
+</div>
 
 <!-- =====================================================================
      REPLIES - the archive, searchable, filterable by thread.
      ===================================================================== -->
-<main class="view hidden" id="view-replies" role="tabpanel" aria-labelledby="tab-replies" data-title="Replies">
+<div class="view hidden" id="view-replies" role="tabpanel" aria-labelledby="tab-replies" data-title="Replies">
   <section>
     <h2>replies</h2>
     <div class="stack">
@@ -626,13 +731,14 @@
       <div class="tiny muted" id="search-note"></div>
     </div>
     <div id="replies" style="margin-top:var(--s-3)"></div>
+    <button class="ghost sm hidden" id="older" style="margin-top:var(--s-3)">Load older replies</button>
   </section>
-</main>
+</div>
 
 <!-- =====================================================================
      WORK - things the agent produced, and things it will do later.
      ===================================================================== -->
-<main class="view hidden" id="view-work" role="tabpanel" aria-labelledby="tab-work" data-title="Work">
+<div class="view hidden" id="view-work" role="tabpanel" aria-labelledby="tab-work" data-title="Work">
 
   <section id="usage-box">
     <h2>usage<span class="sp grow"></span><button class="ghost sm" id="usage-go">Check usage</button></h2>
@@ -640,7 +746,8 @@
   </section>
 
   <section id="spend-box">
-    <h2>spend</h2>
+    <h2>spend<span class="sp grow"></span></h2>
+    <div class="snips" id="spend-range"></div>
     <div class="stack" id="spend"><div class="empty">Loading.</div></div>
   </section>
 
@@ -673,12 +780,12 @@
       </div>
     </details>
   </section>
-</main>
+</div>
 
 <!-- =====================================================================
      SYSTEM - the bridge's own state. Read when something is wrong.
      ===================================================================== -->
-<main class="view hidden" id="view-system" role="tabpanel" aria-labelledby="tab-system" data-title="System">
+<div class="view hidden" id="view-system" role="tabpanel" aria-labelledby="tab-system" data-title="System">
 
   <section id="warn-box" class="hidden">
     <h2>warnings</h2>
@@ -706,6 +813,18 @@
         Keep the screen awake while a run is active
       </label>
       <div class="tiny muted" id="wake-note"></div>
+      <div class="tiny muted mono" style="margin-top:var(--s-2)">devices that receive push</div>
+      <ul class="plain" id="push-devices"></ul>
+      <div class="tiny muted mono" style="margin-top:var(--s-2)">quiet threads</div>
+      <div class="snips" id="mute-threads"></div>
+      <div class="tiny muted mono" style="margin-top:var(--s-2)">quiet hours</div>
+      <div class="row">
+        <input type="time" id="quiet-from" aria-label="Quiet hours start">
+        <span class="tiny muted">to</span>
+        <input type="time" id="quiet-to" aria-label="Quiet hours end">
+        <button class="ghost sm" id="quiet-clear">Clear</button>
+      </div>
+      <div class="tiny muted" id="quiet-note"></div>
     </div>
   </section>
 
@@ -733,15 +852,25 @@
   </section>
 
   <section>
+    <h2>message box</h2>
+    <label class="row tiny muted" style="gap:6px">
+      <input type="checkbox" id="opt-enter" style="width:auto;padding:0">
+      Enter sends the message (Shift+Enter for a new line)
+    </label>
+  </section>
+
+  <section>
     <h2>shortcuts</h2>
     <dl class="kv">
       <dt>1 - 4</dt><dd>switch view</dd>
       <dt>/</dt><dd>search replies</dd>
       <dt>c</dt><dd>compose</dd>
-      <dt>ctrl + enter</dt><dd>send</dd>
+      <dt>ctrl + enter</dt><dd>send (always)</dd>
       <dt>esc</dt><dd>leave the field</dd>
     </dl>
+    <button class="ghost sm" id="tour-again" style="margin-top:var(--s-3)">Show the tour again</button>
   </section>
+</div>
 </main>
 
 <!-- The compose bar is fixed, because queueing work is the whole point of
@@ -755,12 +884,17 @@
   </div>
   <div class="snips" id="snips"></div>
   <div class="inner">
-    <textarea id="msg" placeholder="Message the agent" enterkeyhint="send" aria-label="Message"></textarea>
+    <textarea id="msg" placeholder="Message the agent" aria-label="Message"></textarea>
+    <button class="ghost opts-btn" id="attach-btn" aria-label="Attach a file or photo">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7L14 5.5a3.5 3.5 0 0 1 5 5L10.5 19a2 2 0 0 1-3-3L15 8.5"/></svg>
+    </button>
+    <input type="file" id="attach-file" class="hidden" aria-hidden="true" tabindex="-1">
     <button class="ghost opts-btn" id="opts-btn" aria-expanded="false" aria-controls="opts-row" aria-label="Send options">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
     </button>
     <button class="primary" id="send">Send</button>
   </div>
+  <div class="tiny muted hidden" id="opts-summary" style="max-width:780px;margin:4px auto 0"></div>
   <div class="inner hidden" id="opts-row" style="margin-top:6px;gap:6px">
     <select id="engine" class="grow" aria-label="Engine"></select>
     <select id="model" class="grow" aria-label="Model"></select>
@@ -771,6 +905,7 @@
       <option value="daily:07:00">Every day 07:00</option>
       <option value="weekdays:08:30">Weekdays 08:30</option>
       <option value="weekly:09:00">Weekly 09:00</option>
+      <option value="days">Chosen days…</option>
       <option value="at">At a date and time...</option>
     </select>
   </div>
@@ -781,6 +916,23 @@
   <div class="inner hidden" id="when-at-row" style="margin-top:6px;gap:6px">
     <input type="datetime-local" class="grow" id="when-at" aria-label="Run at">
     <button class="ghost sm" id="when-at-clear">Clear</button>
+  </div>
+  <div class="inner hidden" id="when-days-row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+    <div class="snips grow" id="when-days" style="flex-wrap:wrap"></div>
+    <input type="time" id="when-days-time" value="08:30" aria-label="Time of day">
+  </div>
+</div>
+
+<div class="tour hidden" id="tour" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+  <div class="tour-card">
+    <div class="tour-dots" id="tour-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+    <h3 id="tour-title"></h3>
+    <p id="tour-text"></p>
+    <div class="row">
+      <button class="ghost sm" id="tour-skip">Skip</button>
+      <span class="grow"></span>
+      <button class="primary sm" id="tour-next">Next</button>
+    </div>
   </div>
 </div>
 
@@ -797,9 +949,20 @@
     set: function (k, v) { try { localStorage.setItem('halyard.' + k, JSON.stringify(v)); } catch (e) {} }
   };
 
+  // The token goes in a header, never the URL: a query string is written to
+  // every tunnel and proxy access log between the phone and this machine.
+  function authHeaders(extra) {
+    var h = {};
+    for (var k in (extra || {})) h[k] = extra[k];
+    if (TOKEN) h.authorization = 'Bearer ' + TOKEN;
+    return h;
+  }
   function api(path, opts) {
-    var sep = path.indexOf('?') === -1 ? '?' : '&';
-    return fetch(path + sep + 'token=' + encodeURIComponent(TOKEN), opts || {})
+    opts = opts || {};
+    var o = {};
+    for (var k in opts) o[k] = opts[k];
+    o.headers = authHeaders(opts.headers);
+    return fetch(path, o)
       .then(function (r) { return r.text().then(function (t) {
         var body = null; try { body = t ? JSON.parse(t) : null; } catch (e) { body = { raw: t }; }
         if (!r.ok) { var e2 = new Error((body && body.error) || r.status); e2.status = r.status; throw e2; }
@@ -815,13 +978,113 @@
   }
 
   // ---------------------------------------------------------------------
+  // Toast: says what happened and gets out of the way. `kind` is 'ok', 'bad'
+  // or absent. A failure carries the word "Error" as well as the red stripe,
+  // because colour is never the only channel on this page.
+  function toast(text, opts) {
+    opts = opts || {};
+    var host = $('toasts');
+    var el = document.createElement('div');
+    el.className = 'toast' + (opts.kind ? ' ' + opts.kind : '');
+    el.setAttribute('role', opts.kind === 'bad' ? 'alert' : 'status');
+    var span = document.createElement('span');
+    span.className = 'grow';
+    span.textContent = (opts.kind === 'bad' ? 'Error: ' : '') + text;
+    el.appendChild(span);
+    var timer = null;
+    var close = function () { clearTimeout(timer); if (el.parentNode) el.parentNode.removeChild(el); };
+    if (opts.action) {
+      var b = document.createElement('button');
+      b.className = 'ghost sm'; b.textContent = opts.action;
+      b.onclick = function () { close(); opts.onAction(); };
+      el.appendChild(b);
+    }
+    host.appendChild(el);
+    // Three at most: a burst of failures must not bury the page.
+    while (host.children.length > 3) host.removeChild(host.firstChild);
+    timer = setTimeout(function () { close(); if (opts.onExpire) opts.onExpire(); }, opts.ms || (opts.kind === 'bad' ? 8000 : 4000));
+    return close;
+  }
+
+  // Sheet: one question, two buttons. Resolves true/false, or - when
+  // opts.input is set - the trimmed text, or null if cancelled.
+  function sheet(opts) {
+    return new Promise(function (resolve) {
+      var prevFocus = document.activeElement;
+      var scrim = document.createElement('div');
+      scrim.className = 'scrim';
+      var box = document.createElement('div');
+      box.className = 'sheet';
+      box.setAttribute('role', 'dialog');
+      box.setAttribute('aria-modal', 'true');
+      box.setAttribute('aria-labelledby', 'sheet-title');
+      var h = document.createElement('h3');
+      h.id = 'sheet-title'; h.textContent = opts.title;
+      box.appendChild(h);
+      if (opts.body) {
+        var p = document.createElement('div');
+        p.className = 'small muted'; p.textContent = opts.body;
+        box.appendChild(p);
+      }
+      var input = null;
+      if (opts.input) {
+        input = document.createElement('input');
+        input.placeholder = opts.placeholder || '';
+        input.value = opts.value || '';
+        input.setAttribute('aria-label', opts.title);
+        box.appendChild(input);
+      }
+      var acts = document.createElement('div');
+      acts.className = 'sheet-acts';
+      var cancel = document.createElement('button');
+      cancel.className = 'ghost'; cancel.textContent = opts.cancel || 'Cancel';
+      var ok = document.createElement('button');
+      ok.className = opts.danger ? 'danger' : 'primary'; ok.textContent = opts.confirm || 'OK';
+      acts.appendChild(cancel); acts.appendChild(ok);
+      box.appendChild(acts);
+      scrim.appendChild(box);
+
+      var done = function (v) {
+        document.removeEventListener('keydown', onKey, true);
+        if (scrim.parentNode) scrim.parentNode.removeChild(scrim);
+        if (prevFocus && prevFocus.focus) prevFocus.focus();
+        resolve(v);
+      };
+      var none = input ? null : false;
+      var onKey = function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); done(none); return; }
+        if (e.key === 'Enter' && (!input || document.activeElement === input)) { e.preventDefault(); ok.click(); return; }
+        if (e.key === 'Tab') {
+          // Keep focus inside the sheet while it is open.
+          var f = [input, cancel, ok].filter(Boolean);
+          var i = f.indexOf(document.activeElement);
+          e.preventDefault();
+          f[(i + (e.shiftKey ? f.length - 1 : 1)) % f.length].focus();
+        }
+      };
+      cancel.onclick = function () { done(none); };
+      ok.onclick = function () {
+        if (!input) return done(true);
+        var v = input.value.trim();
+        if (!v) { input.focus(); return; }
+        done(v);
+      };
+      scrim.addEventListener('click', function (e) { if (e.target === scrim) done(none); });
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(scrim);
+      (input || (opts.danger ? cancel : ok)).focus();
+    });
+  }
+
+  // ---------------------------------------------------------------------
   // Theme. Three states, not two: "auto" has to be reachable again once a
   // reader has pinned one, or the control is a one-way door.
   var THEMES = ['auto', 'light', 'dark'];
   function applyTheme(t) {
     if (t === 'auto') document.documentElement.removeAttribute('data-theme');
     else document.documentElement.setAttribute('data-theme', t);
-    $('theme-btn').textContent = t;
+    $('theme-btn').textContent = 'theme: ' + t;
+    $('theme-btn').setAttribute('aria-label', 'Theme: ' + t + '. Tap to change.');
     // The browser chrome colour is part of the page on a phone in
     // standalone mode; leaving it at the old value is a visible seam
     // above the masthead.
@@ -885,6 +1148,22 @@
     b.classList.toggle('set', e.selectedIndex > 0 || m.value !== '' || w.value !== '');
     b.title = 'Send options: ' + parts.join(', ');
     b.setAttribute('aria-label', b.title);
+    // The dot says "not the defaults"; this says what.
+    var s = $('opts-summary');
+    var on = b.classList.contains('set');
+    s.classList.toggle('hidden', !on);
+    s.textContent = on ? 'Sending with: ' + parts.join(' · ') : '';
+  }
+  // Grows with what is typed, up to the same 38vh the stylesheet caps it at.
+  // A drag handle is not a touch control.
+  function growMsg() {
+    var m = $('msg');
+    m.style.height = 'auto';
+    m.style.height = Math.min(m.scrollHeight + 2, Math.round(window.innerHeight * 0.38)) + 'px';
+  }
+  function syncEnterHint() {
+    // The keyboard's action key says "send" only when Enter actually sends.
+    $('msg').setAttribute('enterkeyhint', LS.get('enterSends', false) ? 'send' : 'enter');
   }
   window.addEventListener('resize', measureBar);
   window.addEventListener('orientationchange', measureBar);
@@ -907,6 +1186,7 @@
     if (focus) $('tab-' + v).focus();
     syncDockAsk();
     if (v === 'work') { loadSpend(); pollArtifacts(); pollScheduled(); }
+    if (v === 'system') { pollDevices(); renderQuiet(); }
     measureBar();
   }
   VIEWS.forEach(function (name) { $('tab-' + name).onclick = function () { setView(name); }; });
@@ -937,15 +1217,89 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
-  function renderRich(s) {
-    var h = esc(s);
-    h = h.replace(/(https?:\/\/[^\s&<]+)/g, function (m) { return '<a href="' + m + '" target="_blank" rel="noopener">' + m + '</a>'; });
-    h = h.replace(/(^|\s)(\/artifacts\/[A-Za-z0-9._\-\/]+)/g, function (m, pre, p) {
-      return pre + '<a href="' + p + '?token=' + encodeURIComponent(TOKEN) + '" target="_blank" rel="noopener">' + p + '</a>';
+  // Inline forms, on text that is ALREADY escaped. Anything turned into markup
+  // is parked in `held` and replaced by a NUL-delimited index, so a later rule
+  // cannot re-read it: a URL inside a code span stays code, a `**` inside a
+  // link label stays a label.
+  function inline(h) {
+    var held = [];
+    var hold = function (html) { held.push(html); return '\u0000' + (held.length - 1) + '\u0000'; };
+    var link = function (url, label) {
+      return hold('<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>');
+    };
+    h = h.replace(/`([^`\n]+)`/g, function (m, c) { return hold('<code>' + c + '</code>'); });
+    // [label](url): only http(s) and this bridge's own artifacts. Anything
+    // else - javascript:, data:, a relative path - is left as the text it was.
+    h = h.replace(/\[([^\]\n]+)\]\((https?:\/\/(?:[^\s<&)]|&amp;)+|\/artifacts\/[A-Za-z0-9._\-\/%]+)\)/g, function (m, label, url) {
+      return link(url, label);
     });
-    h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    // The text is already escaped, so a real `&` in a URL is `&amp;` here.
+    h = h.replace(/(https?:\/\/(?:[^\s<&]|&amp;)+)/g, function (m) {
+      var tail = /[.,;:!?)\]]+$/.exec(m);
+      var url = tail ? m.slice(0, m.length - tail[0].length) : m;
+      return link(url, url) + (tail ? tail[0] : '');
+    });
+    h = h.replace(/(^|\s)(\/artifacts\/[A-Za-z0-9._\-\/]+)/g, function (m, pre, p) { return pre + link(p, p); });
     h = h.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-    return h;
+    return h.replace(/\u0000(\d+)\u0000/g, function (m, i) { return held[Number(i)] || ''; });
+  }
+
+  // Escape FIRST, then re-add a small fixed set of tags. Nothing else passes
+  // through, so a reply can never inject markup - which matters because the
+  // reply text is written by a language model that has been reading whatever
+  // it was pointed at. Block forms: fenced code, headings, lists, quotes,
+  // rules, and pipe tables (shown as preformatted text, not parsed).
+  function renderRich(s) {
+    // NUL is the placeholder delimiter in inline(); it has no business in a reply.
+    var lines = esc(String(s == null ? '' : s).replace(/\u0000/g, '')).split('\n');
+    var out = [];
+    var para = [];
+    var flush = function () { if (para.length) { out.push('<p>' + inline(para.join('\n')) + '</p>'); para = []; } };
+    var LI = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/;
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (/^\s*```/.test(line)) {
+        flush();
+        var code = [];
+        i += 1;
+        while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { code.push(lines[i]); i += 1; }
+        i += 1;
+        out.push('<pre class="code"><code>' + code.join('\n') + '</code></pre>');
+        continue;
+      }
+      var head = /^#{1,6}\s+(.*)$/.exec(line);
+      if (head) { flush(); out.push('<div class="md-h">' + inline(head[1]) + '</div>'); i += 1; continue; }
+      if (/^\s*([-*_])\s*(?:\1\s*){2,}$/.test(line)) { flush(); out.push('<hr class="md-hr">'); i += 1; continue; }
+      if (LI.test(line)) {
+        flush();
+        var ordered = /^\s*\d/.test(line);
+        var items = [];
+        while (i < lines.length && LI.test(lines[i])) { items.push('<li>' + inline(LI.exec(lines[i])[1]) + '</li>'); i += 1; }
+        out.push((ordered ? '<ol class="md-l">' : '<ul class="md-l">') + items.join('') + (ordered ? '</ol>' : '</ul>'));
+        continue;
+      }
+      if (/^\s*\|.*\|\s*$/.test(line)) {
+        flush();
+        var rows = [];
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { rows.push(lines[i]); i += 1; }
+        out.push('<pre class="code">' + rows.join('\n') + '</pre>');
+        continue;
+      }
+      // `>` was escaped to `&gt;` before this loop.
+      if (/^&gt;\s?/.test(line)) {
+        flush();
+        var quote = [];
+        while (i < lines.length && /^&gt;\s?/.test(lines[i])) { quote.push(lines[i].replace(/^&gt;\s?/, '')); i += 1; }
+        out.push('<div class="md-q">' + inline(quote.join('\n')) + '</div>');
+        continue;
+      }
+      if (!line.trim()) { flush(); i += 1; continue; }
+      para.push(line);
+      i += 1;
+    }
+    flush();
+    return out.join('');
   }
   function ago(ms) {
     var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -964,12 +1318,29 @@
     // One utterance at a time, tracked globally - two replies reading over each
     // other is unusable, and a button whose utterance was cancelled by another
     // has to be able to find that out or it sits on "Stop" forever.
-    if (speaking) { speechSynthesis.cancel(); if (speaking.reset) speaking.reset(); speaking = null; if (speaking === btn) return; }
+    var prev = speaking;
+    if (prev) {
+      speaking = null;
+      speechSynthesis.cancel();
+      if (prev.reset) prev.reset();
+      // Tapping the button that is reading means Stop. The old code cleared
+      // `speaking` and THEN compared it, so this never matched and the reply
+      // started again from the top.
+      if (prev.btn === btn) return;
+    }
     // URLs read out as forty characters of token, one at a time. Deleting them
     // leaves a sentence that no longer makes sense, so they become "link".
     var u = new SpeechSynthesisUtterance(String(text).replace(/https?:\/\/\S+/g, 'link').replace(/\/artifacts\/\S+/g, 'link'));
-    u.onend = u.onerror = function () { if (speaking && speaking.reset) speaking.reset(); speaking = null; };
-    speaking = { reset: reset };
+    var mine = { btn: btn, reset: reset };
+    // cancel() fires the OLD utterance's onend asynchronously. It must only
+    // clear the state if it is still the current one, or it resets the button
+    // of whatever started speaking after it.
+    u.onend = u.onerror = function () {
+      if (speaking !== mine) return;
+      speaking = null;
+      if (reset) reset();
+    };
+    speaking = mine;
     btn.textContent = 'Stop';
     speechSynthesis.speak(u);
   }
@@ -998,20 +1369,20 @@
 
   var health = null;
   var lastSeq = {};
-  var lastRunId = {};
+  var curRunId = '';
   var steps = [];
   var lastContact = 0;
+  function touch() { lastContact = Date.now(); }
   var allReplies = [];
+  var repliesKey = null;
   var threadFilter = LS.get('threadFilter', '');
 
   function renderHealth(h) {
     health = h;
     lastContact = Date.now();
     setConn(true);
+    syncThreadWs();
 
-    var counts = [];
-    if (h.queued) counts.push(h.queued + ' queued');
-    if (h.scheduled) counts.push(h.scheduled + ' later');
     setBadge('work', h.scheduled ? String(h.scheduled) : '');
 
     var warns = (h.warnings || []).filter(function (x) { return x.level === 'warn'; }).length;
@@ -1047,14 +1418,20 @@
     // Transcript: fetch only the delta, and only when the counter moved.
     var t = (h.transcript || {})[h.activeRun ? h.activeRun.engine : h.defaultEngine];
     if (t) {
-      if (lastRunId[t.runId] === undefined && t.runId !== (window.__runId || '')) {
+      if (t.runId !== curRunId) {
         // runId changed -> a new run -> start the sequence over. Starting each
         // run at 0 instead would hand a phone still holding `since` from the
         // last run the new run's lines as though it had seen them.
-        window.__runId = t.runId; steps = []; lastSeq.v = 0;
+        curRunId = t.runId; steps = []; lastSeq.v = 0; lastLineSeq = 0;
       }
       if (t.seq > (lastSeq.v || 0)) fetchTranscript(h.activeRun ? h.activeRun.engine : h.defaultEngine);
     }
+  }
+
+  function tickElapsed() {
+    if (!health || !health.activeRun) return;
+    var secs = Math.round((Date.now() - health.activeRun.startedAt) / 1000);
+    $('run-elapsed').textContent = secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
   }
 
   function renderRunBox(run) {
@@ -1067,13 +1444,13 @@
       return;
     }
     box.classList.remove('hidden');
-    if (!pendingAsk) setBadge('now', 'run', 'live');
-    var secs = Math.round((Date.now() - run.startedAt) / 1000);
+    if (!pendingAsk) setBadge('now', steps.length ? steps.length + ' steps' : 'run', 'live');
     $('run-what').textContent = run.thread + ' / ' + run.engine;
+    $('run-msg').textContent = String(run.message || '').slice(0, 240);
     var label = run.modelLabel || run.model || '';
     $('run-model').textContent = label;
     $('run-model').classList.toggle('hidden', !label);
-    $('run-elapsed').textContent = secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+    tickElapsed();
     $('run-activity').textContent = run.activity || 'starting';
     $('run-kill').disabled = !!run.killRequested;
     $('run-kill').textContent = run.killRequested ? 'Stopping' : 'Stop';
@@ -1091,12 +1468,30 @@
       : 'This engine has no pre-tool hook, so it cannot be steered mid-run.';
   }
 
+  // One fetch at a time, and a line is appended only if it is newer than the
+  // last one appended. Each health response with a higher counter used to start
+  // its own fetch with the same `since`; two in flight appended the same lines
+  // twice.
+  var transcriptBusy = false;
+  var transcriptAgain = false;
+  var lastLineSeq = 0;
+  function runEngine() { return health && health.activeRun ? health.activeRun.engine : (health ? health.defaultEngine : ''); }
   function fetchTranscript(engine) {
+    if (transcriptBusy) { transcriptAgain = true; return; }
+    transcriptBusy = true;
     api('/api/run/transcript?engine=' + encodeURIComponent(engine || '') + '&since=' + (lastSeq.v || 0))
       .then(function (t) {
         lastSeq.v = t.seq;
-        if (t.lines.length) {
-          steps = steps.concat(t.lines).slice(-300);
+        // The activity line rides on this response, so a tool call does not
+        // need a health refetch to move it.
+        if (health && health.activeRun && t.activity) {
+          health.activeRun.activity = t.activity;
+          $('run-activity').textContent = t.activity;
+        }
+        var fresh = t.lines.filter(function (l) { return l.seq > lastLineSeq; });
+        if (fresh.length) {
+          lastLineSeq = fresh[fresh.length - 1].seq;
+          steps = steps.concat(fresh).slice(-300);
           $('steps').innerHTML = steps.map(function (l) { return '<div>' + esc(l.text) + '</div>'; }).join('');
           $('steps').scrollTop = $('steps').scrollHeight;
         }
@@ -1105,7 +1500,11 @@
         // textContent, never renderRich: half-rendered markdown mid-sentence
         // looks like a rendering bug rather than a work in progress.
         $('run-draft').textContent = t.draft || '';
-      }).catch(function () {});
+      }).catch(function () {})
+      .then(function () {
+        transcriptBusy = false;
+        if (transcriptAgain) { transcriptAgain = false; fetchTranscript(engine); }
+      });
   }
 
   // Built with textContent only: the command is whatever a run tried to
@@ -1187,19 +1586,26 @@
   // no buttons to mirror, so the strip only points at the card.
   function fillAskOpts(s, host, compact) {
     host.innerHTML = '';
+    var scope = $('ask-scope');
+    if (!compact) { scope.innerHTML = ''; scope.classList.add('hidden'); }
     // Empty options is how a free-text question (halyard ask with no
     // --options) is told apart from an approve/deny-shaped one. Falling
     // through to a button default here would send the literal word "Approve"
     // back as the answer to "which of these did you mean?", and the run would
     // act on it.
+    // The strip shows two clamped lines. A command that does not fit there must
+    // not be approvable from there: the cut-off part is where a chained
+    // `&& git push --force` would sit.
+    var tooLong = compact && (String(s.command || '').length > 80 || /\n/.test(String(s.command || '')));
+    if (compact && (!s.options.length || tooLong)) {
+      var open = document.createElement('button');
+      open.className = 'primary opt';
+      open.textContent = s.options.length ? 'Review on Now' : 'Answer on Now';
+      open.onclick = function () { setView('now'); var i = $('ask-opts').querySelector('input'); if (i) i.focus(); };
+      host.appendChild(open);
+      return;
+    }
     if (!s.options.length) {
-      if (compact) {
-        var open = document.createElement('button');
-        open.className = 'primary opt'; open.textContent = 'Answer on Now';
-        open.onclick = function () { setView('now'); var i = $('ask-opts').querySelector('input'); if (i) i.focus(); };
-        host.appendChild(open);
-        return;
-      }
       var input = document.createElement('input');
       input.className = 'grow'; input.placeholder = 'Type your answer';
       var go = document.createElement('button');
@@ -1208,7 +1614,7 @@
         var text = input.value.trim();
         if (!text) return;
         go.disabled = input.disabled = true;
-        post('/api/answer', { id: s.id, answer: text }).then(pollState).catch(function (e) { alert(e.message); go.disabled = input.disabled = false; });
+        post('/api/answer', { id: s.id, answer: text }).then(pollState).catch(function (e) { toast('Could not send your answer: ' + e.message, { kind: 'bad' }); go.disabled = input.disabled = false; });
       };
       go.onclick = submit;
       input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
@@ -1222,10 +1628,30 @@
       b.className = 'opt ' + (/approve|allow|yes/i.test(opt) ? 'primary' : 'danger');
       b.onclick = function () {
         b.disabled = true;
-        post('/api/answer', { id: s.id, answer: opt }).then(pollState).catch(function (e) { alert(e.message); b.disabled = false; });
+        post('/api/answer', { id: s.id, answer: opt }).then(pollState).catch(function (e) { toast('Could not send your answer: ' + e.message, { kind: 'bad' }); b.disabled = false; });
       };
       host.appendChild(b);
     });
+    // Full card only, never the strip or the lock screen: it grants more than
+    // the one command on screen. A ghost button, so plain Approve stays the
+    // default. The answer is still the exact word 'Approve' - the hook allows
+    // on nothing else - and the scope rides in its own field.
+    if (!compact && health && health.activeRun && s.rule && ((health.relay || {}).runScopedRules || []).indexOf(s.rule) !== -1) {
+      var all = document.createElement('button');
+      all.className = 'ghost sm';
+      all.textContent = 'Approve every ' + s.rule + ' command for the rest of this run';
+      all.onclick = function () {
+        all.disabled = true;
+        post('/api/answer', { id: s.id, answer: 'Approve', scope: 'run' }).then(pollState)
+          .catch(function (e) { toast('Could not send your answer: ' + e.message, { kind: 'bad' }); all.disabled = false; });
+      };
+      var note = document.createElement('div');
+      note.className = 'tiny muted';
+      note.textContent = 'It stops asking until this run ends. Each one is still listed in the steps.';
+      scope.appendChild(all);
+      scope.appendChild(note);
+      scope.classList.remove('hidden');
+    }
   }
 
   var dockAskShown = false;
@@ -1237,13 +1663,30 @@
     measureBar();
   }
 
+  var RULE_LABEL = {
+    'git': 'git: publishes or discards work',
+    'destructive-fs': 'recursive delete',
+    'network-egress': 'sends data off this machine',
+    'secret-egress': 'reads a secret and uses the network',
+    'tainted-egress': 'network request after reading untrusted content'
+  };
+  var askExpiresAt = 0;
+  var askIsRelay = false;
+  function tickAsk() {
+    var el = $('ask-left');
+    if (!el || !askExpiresAt) return;
+    var left = Math.round((askExpiresAt - Date.now()) / 1000);
+    if (left <= 0) { el.textContent = askIsRelay ? 'Timed out - it was denied' : 'Timed out'; return; }
+    el.textContent = (askIsRelay ? 'Denies itself in ' : 'Times out in ') + Math.floor(left / 60) + ':' + ('0' + (left % 60)).slice(-2);
+  }
+
   function renderState(s) {
     var pending = s && s.status === 'pending';
     $('ask').classList.toggle('hidden', !pending);
 
+    document.title = pending ? '(' + (s.pending || 1) + ') ' + BASE_TITLE : BASE_TITLE;
     if (pending !== pendingAsk) {
       pendingAsk = pending;
-      document.title = pending ? '(1) ' + BASE_TITLE : BASE_TITLE;
       setBadge('now', pending ? 'ask' : (health && health.activeRun ? 'run' : ''), pending ? 'ask' : 'live');
       if (pending) {
         setView('now');
@@ -1251,7 +1694,7 @@
       }
     }
     syncDockAsk();
-    if (!pending) { lastRenderedAskId = null; return; }
+    if (!pending) { lastRenderedAskId = null; askExpiresAt = 0; return; }
     // The interval poll re-fires with the SAME still-pending question every
     // few seconds. Rebuilding the card unconditionally is harmless for
     // buttons, but for the free-text input below it wipes whatever the user
@@ -1262,8 +1705,30 @@
     if (s.id === lastRenderedAskId) return;
     lastRenderedAskId = s.id;
     $('ask-q').textContent = s.question;
+    $('ask').querySelector('h2').textContent = s.pending > 1 ? 'needs your answer (1 of ' + s.pending + ')' : 'needs your answer';
     $('ask-cmd').textContent = s.command;
     $('ask-cmd').classList.toggle('hidden', !s.command);
+    // Which rule fired, where, and how long is left - built with DOM calls and
+    // textContent only, because the directory comes from the agent.
+    var meta = $('ask-meta');
+    meta.innerHTML = '';
+    if (s.rule && RULE_LABEL[s.rule]) {
+      var chip = document.createElement('span');
+      chip.className = 'chip'; chip.textContent = RULE_LABEL[s.rule];
+      meta.appendChild(chip);
+    }
+    if (s.cwd) {
+      var dir = document.createElement('span');
+      dir.textContent = String(s.cwd).replace(/^\/(?:Users|home)\/[^/]+|^[A-Za-z]:\\Users\\[^\\]+/, '~');
+      meta.appendChild(dir);
+    }
+    if (s.expiresAt) {
+      var left = document.createElement('span');
+      left.id = 'ask-left'; left.className = 'grow'; left.style.textAlign = 'right';
+      meta.appendChild(left);
+    }
+    askExpiresAt = s.expiresAt || 0; askIsRelay = !!s.rule;
+    tickAsk();
     fillAskOpts(s, $('ask-opts'), false);
     $('dock-ask-q').textContent = s.question;
     $('dock-ask-cmd').textContent = s.command;
@@ -1278,16 +1743,43 @@
   // - it renders straight from what was saved here, so it is still there even
   // if the archive is unreachable or the original entry has since been
   // deleted.
-  function pinnedList() { return LS.get('pinned', []); }
+  // Pins and snippets used to live only in this browser. The server copy is the
+  // truth; localStorage is the copy that renders before the server answers and
+  // while it cannot be reached.
+  var prefs = {};
+  function savePref(key, value) {
+    prefs[key] = value;
+    LS.set(key === 'pins' ? 'pinned' : key, value);
+    var body = {}; body[key] = value;
+    post('/api/prefs', body).catch(function () { /* stays local; resent on the next change */ });
+  }
+  function loadPrefs() {
+    return api('/api/prefs').then(function (p) {
+      prefs = p || {};
+      // First run after this feature: the server has nothing, this browser has
+      // something. Hand it over once rather than appear to lose it.
+      if (prefs.pins === undefined && LS.get('pinned', []).length) savePref('pins', LS.get('pinned', []));
+      if (prefs.snippets === undefined && LS.get('snippets', null)) savePref('snippets', LS.get('snippets', []));
+      repliesKey = null;
+      renderPinned(); renderSnips(); renderReplies(allReplies);
+      // Only where it is on screen: it fetches the thread list, and this runs
+      // on every context bump. setView renders it on the way in.
+      if (view === 'system') renderQuiet();
+    }).catch(function () {});
+  }
+  function pinnedList() { return prefs.pins || LS.get('pinned', []); }
   function isPinned(id) { return pinnedList().some(function (p) { return p.id === id; }); }
   function pinToggle(n) {
     var list = pinnedList();
     list = isPinned(n.id)
       ? list.filter(function (p) { return p.id !== n.id; })
       : [{ id: n.id, at: n.at, thread: n.thread, engine: n.engine, model: n.model, message: n.message }].concat(list).slice(0, 50);
-    LS.set('pinned', list);
+    savePref('pins', list);
+    repliesKey = null;
     renderPinned();
   }
+  // Newest first (pinToggle prepends), shown as one row until opened, so a
+  // pile of pins never pushes the latest reply down the page.
   function renderPinned() {
     var list = pinnedList();
     $('pinned-box').classList.toggle('hidden', !list.length);
@@ -1296,7 +1788,26 @@
     list.forEach(function (n) {
       box.appendChild(replyEl(n, { pinnedOnly: true }));
     });
+    if (!list.length) return;
+    $('pinned-count').textContent = '\u00b7 ' + list.length;
+    var first = String(list[0].message || '').replace(/[#*_`>]/g, '').split('\n')
+      .map(function (l) { return l.trim(); }).filter(Boolean)[0] || '';
+    $('pinned-preview').firstChild.textContent = first;
+    paintPinnedOpen();
   }
+  // Open or shut is this phone's choice and survives a reload; shut is the default.
+  function paintPinnedOpen() {
+    var open = !!LS.get('pinnedOpen', false);
+    $('pinned-head').setAttribute('aria-expanded', String(open));
+    $('pinned').classList.toggle('hidden', !open);
+    $('pinned-preview').classList.toggle('hidden', open);
+  }
+  function togglePinnedOpen() {
+    LS.set('pinnedOpen', !LS.get('pinnedOpen', false));
+    paintPinnedOpen();
+  }
+  $('pinned-head').addEventListener('click', togglePinnedOpen);
+  $('pinned-preview').addEventListener('click', togglePinnedOpen);
 
   // One builder for every reply-shaped thing on the page: the archive list,
   // the pinned snapshots and the "latest reply" summary on Now. Three copies
@@ -1312,6 +1823,37 @@
       '<div class="meta">' + meta.map(esc).join('  ') + '</div>' +
       (n.prompt && !opts.pinnedOnly ? '<div class="prompt small">' + esc(n.prompt.slice(0, 200)) + '</div>' : '') +
       '<div class="text">' + renderRich(n.message) + '</div>';
+    // Relative times only say "3h ago"; the exact time is one tap away.
+    var metaEl = el.querySelector('.meta');
+    var exact = new Date(n.at).toLocaleString();
+    metaEl.title = exact;
+    metaEl.onclick = function () { toast(exact); };
+    var textEl = el.querySelector('.text');
+    // A copy button per code block: selecting a block by hand on a phone is the
+    // slowest thing on this page.
+    Array.prototype.forEach.call(textEl.querySelectorAll('pre.code'), function (pre) {
+      var cb = document.createElement('button');
+      cb.className = 'ghost sm'; cb.textContent = 'Copy code';
+      cb.onclick = function () {
+        copyText(pre.textContent).then(function (ok) {
+          cb.textContent = ok ? 'Copied' : 'Copy failed';
+          setTimeout(function () { cb.textContent = 'Copy code'; }, 1200);
+        });
+      };
+      pre.parentNode.insertBefore(cb, pre.nextSibling);
+    });
+    if (String(n.message).split('\n').length > 40) {
+      textEl.classList.add('clamp');
+      var more = document.createElement('button');
+      more.className = 'ghost sm'; more.textContent = 'Show all';
+      more.setAttribute('aria-expanded', 'false');
+      more.onclick = function () {
+        var open = textEl.classList.toggle('clamp') === false;
+        more.textContent = open ? 'Show less' : 'Show all';
+        more.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+      el.appendChild(more);
+    }
 
     var acts = document.createElement('div');
     acts.className = 'acts';
@@ -1369,6 +1911,7 @@
           // Assigning .value fires no change event, so the handler that
           // refreshes the carried-context panel has to be called by hand.
           pollContext();
+          renderConversation();
         }
         setView('now');
         // From the Now view the card is already on the target view, so with
@@ -1377,9 +1920,45 @@
         setTimeout(function () { b.textContent = 'Follow up'; }, 1400);
         $('msg').focus();
       });
+      // The run's step list, stored when it ended. Fetched on the tap, built
+      // once, and a second tap folds it. Text only: these lines are the agent's.
+      var stepsEl = null;
+      if (n.runId) act('Steps', function (b) {
+        if (stepsEl) { stepsEl.open = !stepsEl.open; return; }
+        b.disabled = true;
+        api('/api/run/history?id=' + encodeURIComponent(n.runId)).then(function (r) {
+          var d = document.createElement('details');
+          d.open = true;
+          var sm = document.createElement('summary');
+          sm.textContent = r.lines.length + ' steps';
+          var body = document.createElement('div');
+          body.className = 'mono small det-body';
+          r.lines.forEach(function (l) { var row = document.createElement('div'); row.textContent = l.text; body.appendChild(row); });
+          d.appendChild(sm); d.appendChild(body);
+          textEl.parentNode.insertBefore(d, textEl.nextSibling);
+          stepsEl = d; b.disabled = false;
+        }).catch(function (e) {
+          b.disabled = false;
+          toast(e.status === 404 ? 'The steps for that run are no longer stored.' : 'Could not load the steps: ' + e.message, { kind: e.status === 404 ? undefined : 'bad' });
+        });
+      });
+      // Not confirmed up front. The reply disappears, a toast offers Undo for
+      // six seconds, and only then is it deleted from the archive - which is
+      // permanent. Closing the page inside those six seconds keeps the reply,
+      // which is the safe direction to fail in.
       act('Delete', function () {
-        if (!confirm('Delete this reply? This cannot be undone.')) return;
-        api('/api/notifications?id=' + encodeURIComponent(n.id), { method: 'DELETE' }).then(pollNotifications);
+        el.classList.add('hidden');
+        toast('Reply deleted.', {
+          action: 'Undo', ms: 6000,
+          onAction: function () { el.classList.remove('hidden'); },
+          onExpire: function () {
+            // Paged-in older replies survive a poll (withOlder), so a deleted one must leave the list too.
+            allReplies = allReplies.filter(function (x) { return x.id !== n.id; });
+            api('/api/notifications?id=' + encodeURIComponent(n.id), { method: 'DELETE' })
+              .then(pollNotifications)
+              .catch(function (e) { el.classList.remove('hidden'); toast('Could not delete the reply: ' + e.message, { kind: 'bad' }); });
+          }
+        });
       }).className = 'ghost sm destructive';
     }
     el.appendChild(acts);
@@ -1427,10 +2006,18 @@
 
   function renderReplies(items) {
     allReplies = items;
+    // Rebuilding thirty replies under a finger resets "Copied", drops a text
+    // selection and re-runs the renderer. Skip it when nothing visible changed.
+    var key = items.map(function (n) { return n.id; }).join(',') + '|' + threadFilter + '|' + thread() + '|' +
+      pinnedList().map(function (p) { return p.id; }).join(',');
+    if (key === repliesKey) return;
+    repliesKey = key;
     renderThreadFilter(items);
     refreshCues();
     var shown = threadFilter ? items.filter(function (n) { return n.thread === threadFilter; }) : items;
     setBadge('replies', shown.length ? String(shown.length) : '');
+    // Paging back only makes sense on the plain list, not on search results.
+    $('older').classList.toggle('hidden', !shown.length || !!$('search').value.trim());
 
     var box = $('replies');
     box.innerHTML = '';
@@ -1440,11 +2027,25 @@
       shown.forEach(function (n) { box.appendChild(replyEl(n)); });
     }
 
-    // Now carries the most recent reply, so the common case - glance at the
-    // phone, read the answer - needs no navigation at all.
-    var latest = items.filter(function (n) { return !n.internal; })[0];
-    $('latest-box').classList.toggle('hidden', !latest);
-    if (latest) { $('latest').innerHTML = ''; $('latest').appendChild(replyEl(latest)); }
+    renderConversation();
+  }
+
+  // Now shows the thread the next message will go to: its recent replies,
+  // oldest first, so the page reads downwards into the message box. "Latest
+  // reply" used to show whatever arrived last on ANY thread.
+  function renderConversation() {
+    var t = thread();
+    var mine = allReplies.filter(function (n) { return (n.thread || 'main') === t; }).slice(0, 10).reverse();
+    $('convo-title').textContent = 'conversation · ' + t;
+    var box = $('convo');
+    box.innerHTML = '';
+    if (!mine.length) {
+      box.innerHTML = '<div class="empty">' + (allReplies.length === 0
+        ? 'Nothing here yet. Try one of the snippets above the message box, or write your own.'
+        : 'Nothing in this thread yet. Write a message below to start it.') + '</div>';
+      return;
+    }
+    mine.forEach(function (n) { box.appendChild(replyEl(n)); });
   }
 
   function renderThreadFilter(items) {
@@ -1513,11 +2114,27 @@
   }
 
   var spendLoaded = 0;
+  var spendDays = LS.get('spendDays', 7);
+  function renderSpendRange() {
+    var box = $('spend-range');
+    box.innerHTML = '';
+    [7, 30, 90].forEach(function (n) {
+      var b = document.createElement('button');
+      b.className = 'snip';
+      b.textContent = n + ' days';
+      b.setAttribute('aria-pressed', n === spendDays ? 'true' : 'false');
+      b.onclick = function () { spendDays = n; LS.set('spendDays', n); renderSpendRange(); loadSpend(true); };
+      box.appendChild(b);
+    });
+  }
   function loadSpend(force) {
     if (!force && Date.now() - spendLoaded < 30000) return;
     spendLoaded = Date.now();
-    api('/api/spend?days=7').then(function (s) {
+    renderSpendRange();
+    api('/api/spend?days=' + spendDays).then(function (s) {
       var days = s.byDay || [];
+      var all = days.length;
+      if (spendDays > 14) days = days.slice(-14);
       var threads = s.byThread || [];
       var dMax = Math.max.apply(null, days.map(function (d) { return d.costUsd; }).concat([0.0001]));
       var tMax = Math.max.apply(null, threads.map(function (t) { return t.costUsd; }).concat([0.0001]));
@@ -1525,17 +2142,29 @@
       var html =
         '<div class="figure">' +
           '<span class="value">$' + s.totalUsd.toFixed(2) + '</span>' +
-          '<span class="over">over ' + s.runs + ' run(s) in 7 days' +
-            (s.runs ? ', $' + (s.totalUsd / s.runs).toFixed(3) + ' each' : '') + '</span>' +
+          '<span class="over">over ' + s.runs + ' run(s) in ' + spendDays + ' days' +
+            (s.runs ? ', $' + (s.totalUsd / s.runs).toFixed(3) + ' each' : '') +
+            // The cap is useless as a number nobody can see approaching.
+            (health && health.spendGuard && health.spendGuard.dailyUsd > 0 && Number.isFinite(s.todayUsd)
+              ? ' · today $' + s.todayUsd.toFixed(2) + ' of $' + health.spendGuard.dailyUsd.toFixed(2) : '') + '</span>' +
         '</div>' +
         '<div class="tiny muted mono" style="margin-top:var(--s-3)">by day</div>' +
         days.map(function (d, i) {
           return bar(d.day, d.costUsd, Math.round(100 * d.costUsd / dMax), rampToken(i, days.length));
-        }).join('');
+        }).join('') +
+        (all > days.length ? '<div class="tiny muted">Showing the latest 14 of ' + all + ' days.</div>' : '');
       if (threads.length) {
         html += '<div class="tiny muted mono" style="margin-top:var(--s-3)">by thread</div>' +
           threads.map(function (t, i) {
             return bar(t.key, t.costUsd, Math.round(100 * t.costUsd / tMax), catToken(i));
+          }).join('');
+      }
+      var models = s.byModel || [];
+      if (models.length) {
+        var mMax = Math.max.apply(null, models.map(function (m) { return m.costUsd; }).concat([0.0001]));
+        html += '<div class="tiny muted mono" style="margin-top:var(--s-3)">by model</div>' +
+          models.map(function (m, i) {
+            return bar(m.key === 'unknown' ? 'default model' : m.key, m.costUsd, Math.round(100 * m.costUsd / mMax), catToken(i));
           }).join('');
       }
       $('spend').innerHTML = html;
@@ -1549,7 +2178,17 @@
 
   function pollHealth() { return api('/api/health').then(function (h) { renderHealth(h); flushOutbox(); }).catch(connDown); }
   function pollState() { return api('/api/state').then(renderState).catch(function () {}); }
-  function pollNotifications() { return api('/api/notifications').then(function (r) { renderReplies(r.items); }).catch(function () {}); }
+  // The ring only holds the newest replies. Entries the phone paged in with
+  // "Load older replies" are older than its oldest, so they are kept and put
+  // after it; replacing wholesale would drop them on the next poll.
+  function withOlder(ring) {
+    if (!ring.length || $('search').value.trim()) return ring;
+    var oldest = ring[ring.length - 1].at;
+    var ids = {};
+    ring.forEach(function (n) { ids[n.id] = true; });
+    return ring.concat(allReplies.filter(function (n) { return n.at < oldest && !ids[n.id]; }));
+  }
+  function pollNotifications() { return api('/api/notifications').then(function (r) { renderReplies(withOlder(r.items)); }).catch(function () {}); }
   function pollContext() {
     return Promise.all([api('/api/threads'), api('/api/handover?thread=' + encodeURIComponent(thread()))])
       .then(function (r) {
@@ -1566,40 +2205,123 @@
         }
         sel.innerHTML = opts.join('');
         $('handover').textContent = r[1].exists ? r[1].text : 'No carried context in this thread yet.';
+        syncThreadWs();
       }).catch(function () {});
+  }
+  // Where this thread's runs happen (threadWorkspaces, set on the machine only).
+  // hasOwnProperty: a thread called "constructor" must not read Object's.
+  function syncThreadWs() {
+    var map = (health && health.threadWorkspaces) || {}, cur = thread();
+    var ws = Object.prototype.hasOwnProperty.call(map, cur) ? map[cur] : (health && health.workspace);
+    $('thread-ws').textContent = ws ? 'runs in ' + ws : '';
   }
   function pollArtifacts() {
     return api('/api/artifacts').then(function (r) {
       $('artifacts').innerHTML = r.items.length ? r.items.map(function (a) {
-        var href = '/artifacts/' + encodeURIComponent(a.name) + '?token=' + encodeURIComponent(TOKEN);
+        var href = '/artifacts/' + encodeURIComponent(a.name);
         // Save is the untouched file as a download, so a copy kept on the
         // phone works offline.
         return '<li><a class="grow small" href="' + href + '" target="_blank" rel="noopener">' + esc(a.name) + '</a>' +
           '<span class="tiny muted mono">' + Math.max(1, Math.round(a.size / 1024)) + ' kB</span>' +
-          '<a class="ghost sm btn" href="' + href + '&download=1" download="' + esc(a.name) + '">Save</a></li>';
+          '<a class="ghost sm btn" href="' + href + '?download=1" download="' + esc(a.name) + '">Save</a></li>';
       }).join('') : '<li class="empty">None.</li>';
     }).catch(function () {});
+  }
+  function pollQueue() {
+    return api('/api/inbox').then(function (r) {
+      var now = Date.now();
+      // A paused item stays scheduled even after its time passes; see isDue().
+      var due = r.items.filter(function (i) { return !i.paused && (!i.runAfter || i.runAfter <= now); });
+      $('queue-box').classList.toggle('hidden', !due.length);
+      $('queue-title').textContent = 'waiting (' + due.length + ')';
+      $('queue').innerHTML = due.map(function (i, n) {
+        return '<li class="stacked"><span class="small">' + esc(i.message.slice(0, 160)) + '</span>' +
+          '<span class="when"><span class="tiny muted mono grow">' + esc(i.thread) + ' · ' + esc(i.engine) +
+            (i.repeat ? ' · repeats ' + esc(repeatWords(i.repeat)) : '') + (n === 0 ? ' · next' : '') + '</span>' +
+          (n === 0 ? '' : '<button class="ghost sm" data-front="' + esc(i.id) + '">Run next</button>') +
+          '<button class="ghost sm" data-drop="' + esc(i.id) + '"' + (i.repeat ? ' data-repeat="1"' : '') + '>Cancel</button></span></li>';
+      }).join('');
+    }).catch(function () {});
+  }
+  // A repeat in words: "days:1,3" reads "Mon, Wed", not the wire format.
+  var DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function repeatWords(r) {
+    var m = /^days:(.+)$/.exec(r || '');
+    if (m) return m[1].split(',').map(function (d) { return DAY_NAMES[d]; }).join(', ');
+    return r === 'daily' ? 'every day' : r;
   }
   function pollScheduled() {
     return api('/api/inbox/scheduled').then(function (r) {
       $('scheduled').innerHTML = r.items.length ? r.items.map(function (i) {
         // Seconds are noise on something that fires tomorrow morning.
-        var when = new Date(i.runAfter).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+        // "paused" is a word in the row, not a colour.
+        var when = (i.paused ? 'paused · ' : '') + new Date(i.runAfter).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+        var id = esc(i.id);
         return '<li class="stacked"><span class="small">' + esc(i.message.slice(0, 120)) + '</span>' +
-          '<span class="when"><span class="tiny muted mono grow">' + esc(when) + (i.repeat ? '  ' + esc(i.repeat) : '') + '</span>' +
-          '<button class="ghost sm" data-cancel="' + esc(i.id) + '">Cancel</button></span></li>';
+          '<span class="when" style="flex-wrap:wrap"><span class="tiny muted mono grow">' + esc(when) + (i.repeat ? '  ' + esc(repeatWords(i.repeat)) : '') + '</span>' +
+          (i.paused ? '<button class="ghost sm" data-resume="' + id + '">Resume</button>' : '<button class="ghost sm" data-pause="' + id + '">Pause</button>') +
+          '<button class="ghost sm" data-now="' + id + '">Run now</button>' +
+          '<button class="ghost sm" data-cancel="' + id + '">Cancel</button></span></li>';
       }).join('') : '<li class="empty">None.</li>';
     }).catch(function () {});
+  }
+
+  function pollDevices() {
+    return api('/api/push/subs').then(function (r) {
+      $('push-devices').innerHTML = r.items.length ? r.items.map(function (d) {
+        var added = d.addedAt ? 'added ' + new Date(d.addedAt).toLocaleDateString() : 'added before this was tracked';
+        return '<li class="stacked"><span class="small">' + esc(d.label || 'Unnamed browser') + '</span>' +
+          '<span class="when"><span class="tiny muted mono grow">' + esc(d.host) + ' · ' + esc(added) + '</span>' +
+          '<button class="ghost sm" data-remove="' + esc(d.id) + '">Remove</button></span></li>';
+      }).join('') : '<li class="empty">No device is subscribed. Enable push on the phone you want notified.</li>';
+    }).catch(function () {});
+  }
+
+  // Muted threads and quiet hours are prefs, so the server skips the push for
+  // every device at once. Approvals are never skipped (see deliver()).
+  function renderQuiet() {
+    api('/api/threads').then(function (r) {
+      var names = r.items.map(function (t) { return t.name; });
+      if (names.indexOf('main') === -1) names.unshift('main');
+      // A muted thread the server no longer lists still needs a chip, or it
+      // could never be unmuted.
+      (prefs.mutedThreads || []).forEach(function (t) { if (names.indexOf(t) === -1) names.push(t); });
+      var box = $('mute-threads');
+      box.innerHTML = '';
+      names.forEach(function (name) {
+        var b = document.createElement('button');
+        b.className = 'snip';
+        b.textContent = name;
+        b.setAttribute('aria-pressed', (prefs.mutedThreads || []).indexOf(name) !== -1 ? 'true' : 'false');
+        b.onclick = function () {
+          var list = (prefs.mutedThreads || []).filter(function (t) { return t !== name; });
+          if (b.getAttribute('aria-pressed') !== 'true') list.push(name);
+          savePref('mutedThreads', list);
+          b.setAttribute('aria-pressed', list.indexOf(name) !== -1 ? 'true' : 'false');
+        };
+        box.appendChild(b);
+      });
+    }).catch(function () {});
+    var q = prefs.quietHours;
+    // Not the one being edited: a prefs reload mid-edit would blank it.
+    ['from', 'to'].forEach(function (k) { var el = $('quiet-' + k); if (el !== document.activeElement) el.value = q ? q[k] : ''; });
+    $('quiet-note').textContent = q
+      ? 'No reply notifications from ' + q.from + ' to ' + q.to + ', in this machine\'s time zone (' + ((health && health.timeZone) || '?') + '). Approvals still notify.'
+      : 'Replies always notify. Approvals always notify, whatever is set here.';
   }
 
   function setConn(up) {
     var el = $('conn');
     el.className = 'conn ' + (up ? 'up' : 'down');
+    // "live" while the stream is open. A bare "12s" was a reading with no label.
     $('conn-text').textContent = up
-      ? (lastContact ? ago(lastContact).replace(' ago', '') : 'live')
+      ? (streamOk || !lastContact ? 'live' : 'polled ' + ago(lastContact))
       : 'offline';
   }
-  function connDown() { setConn(false); }
+  function connDown() {
+    setConn(false);
+    if (!lastContact) $('conn-text').textContent = 'offline - messages will be parked';
+  }
 
   // ---------------------------------------------------------------------
   // The change stream, and the timers it replaces.
@@ -1613,8 +2335,13 @@
   var streamOk = false;
   var timers = {};
 
-  function retime() {
+  function stopTimers() {
     Object.keys(timers).forEach(function (k) { clearInterval(timers[k]); });
+    timers = {};
+  }
+
+  function retime() {
+    stopTimers();
     var mult = streamOk ? 10 : 1;
     timers.health = setInterval(pollHealth, BASE_MS.health * mult);
     timers.state = setInterval(pollState, BASE_MS.state * mult);
@@ -1624,22 +2351,32 @@
   }
 
   var seen = {};
+  var es = null;
+  var reconnectTimer = null;
+  // EventSource cannot set a header, so it rides the cookie. A browser that
+  // refuses the cookie never opens the stream; after two failures in a row with
+  // no open in between, fall back to the tokened URL rather than to no stream.
+  var streamFails = 0;
   function connectStream() {
-    if (!window.EventSource) return;
-    var es = new EventSource('/api/events?token=' + encodeURIComponent(TOKEN));
-    es.onopen = function () { streamOk = true; retime(); setConn(true); };
+    if (!window.EventSource || document.hidden) return;
+    es = new EventSource(streamFails >= 2 ? '/api/events?token=' + encodeURIComponent(TOKEN) : '/api/events');
+    es.onopen = function () { streamFails = 0; streamOk = true; retime(); setConn(true); };
     es.onmessage = function (ev) {
+      touch();
       var v; try { v = JSON.parse(ev.data); } catch (e) { return; }
       if (v.health !== seen.health) { seen.health = v.health; pollHealth(); }
-      if (v.state !== seen.state) { seen.state = v.state; pollState(); }
-      if (v.notifications !== seen.notifications) { seen.notifications = v.notifications; pollNotifications(); pollScheduled(); }
-      if (v.context !== seen.context) { seen.context = v.context; pollContext(); }
+      if (v.state !== seen.state) { seen.state = v.state; pollState(); pollScheduled(); pollQueue(); }
+      if (v.notifications !== seen.notifications) { seen.notifications = v.notifications; pollNotifications(); }
+      if (v.run !== seen.run) { seen.run = v.run; fetchTranscript(runEngine()); }
+      if (v.context !== seen.context) { seen.context = v.context; pollContext(); loadPrefs(); }
       if (v.artifacts !== seen.artifacts) { seen.artifacts = v.artifacts; pollArtifacts(); }
     };
+    es.addEventListener('ping', touch);
     es.onerror = function () {
+      streamFails += 1;
       streamOk = false; retime(); connDown();
       es.close();
-      setTimeout(connectStream, 5000);
+      reconnectTimer = setTimeout(connectStream, 5000);
     };
   }
 
@@ -1672,6 +2409,17 @@
     // not a pattern. The recurring options above remain the way to repeat.
     if (v === 'at') { var t = whenAtTime(); return isFinite(t) ? { runAfter: t } : {}; }
     if (v === '+1h') return { runAfter: Date.now() + 3600e3 };
+    if (v === 'days') {
+      var picked = Array.prototype.slice.call($('when-days').querySelectorAll('[aria-pressed="true"]'))
+        .map(function (b) { return Number(b.getAttribute('data-day')); });
+      var hm = /^(\d{2}):(\d{2})$/.exec($('when-days-time').value);
+      if (!picked.length || !hm) return {};
+      var dd = new Date();
+      dd.setHours(Number(hm[1]), Number(hm[2]), 0, 0);
+      if (dd.getTime() <= Date.now()) dd.setDate(dd.getDate() + 1);
+      while (picked.indexOf(dd.getDay()) === -1) dd.setDate(dd.getDate() + 1);
+      return { runAfter: dd.getTime(), repeat: 'days:' + picked.slice().sort().join(',') };
+    }
     var m = /^(?:(daily|weekdays|weekly):)?(\d{2}):(\d{2})$/.exec(v);
     if (!m) return {};
     var d = new Date();
@@ -1687,6 +2435,7 @@
   function syncWhen() {
     var on = $('when').value === 'at';
     $('when-at-row').classList.toggle('hidden', !on);
+    $('when-days-row').classList.toggle('hidden', $('when').value !== 'days');
     if (on) {
       // The browser will not stop a past date on its own, but min at least
       // greys it out in the native picker rather than failing after the tap.
@@ -1709,25 +2458,29 @@
   // broke overnight", "run the tests and summarise"). Typing one of those
   // on a phone, one-handed, on a train, is the thing this app is worst at,
   // so they are one tap and they live next to the box they fill.
-  function snippets() { return LS.get('snippets', ['Status update, two lines', 'Run the tests and summarise failures', 'What changed since my last message?']); }
+  function snippets() { return prefs.snippets || LS.get('snippets', ['Status update, two lines', 'Run the tests and summarise failures', 'What changed since my last message?']); }
+  // While true, a tap on a snippet removes it instead of inserting it. A visible
+  // mode replaces long-press, which nobody discovers and touch devices fire
+  // twice (press and menu).
+  var snipEdit = false;
   function renderSnips() {
     var box = $('snips');
     box.innerHTML = '';
     snippets().forEach(function (text, i) {
       var b = document.createElement('button');
-      b.className = 'snip'; b.textContent = text; b.title = text;
-      b.onclick = function () {
-        var m = $('msg');
-        m.value = m.value ? m.value.replace(/\s*$/, '\n') + text : text;
-        m.focus(); saveDraft();
-      };
-      // Long-press or right-click removes it, so a snippet list cannot
-      // silt up with things typed once.
-      var hold = null;
-      b.oncontextmenu = function (e) { e.preventDefault(); removeSnip(i); };
-      b.addEventListener('touchstart', function () { hold = setTimeout(function () { removeSnip(i); }, 650); }, { passive: true });
-      b.addEventListener('touchend', function () { clearTimeout(hold); });
-      b.addEventListener('touchmove', function () { clearTimeout(hold); });
+      b.className = 'snip'; b.title = text;
+      if (snipEdit) {
+        b.textContent = '× ' + text;
+        b.setAttribute('aria-label', 'Remove snippet: ' + text);
+        b.onclick = function () { removeSnip(i); };
+      } else {
+        b.textContent = text;
+        b.onclick = function () {
+          var m = $('msg');
+          m.value = m.value ? m.value.replace(/\s*$/, '\n') + text : text;
+          m.focus(); saveDraft(); growMsg();
+        };
+      }
       box.appendChild(b);
     });
     var add = document.createElement('button');
@@ -1737,16 +2490,25 @@
     add.onclick = function () {
       var text = $('msg').value.trim();
       if (!text) { $('msg').focus(); return; }
-      LS.set('snippets', snippets().concat([text.slice(0, 120)]).slice(-12));
+      savePref('snippets', snippets().concat([text.slice(0, 120)]).slice(-12));
       renderSnips();
     };
     box.appendChild(add);
+    var edit = document.createElement('button');
+    edit.className = 'snip add';
+    edit.textContent = snipEdit ? 'done' : 'edit';
+    edit.setAttribute('aria-pressed', snipEdit ? 'true' : 'false');
+    edit.onclick = function () { snipEdit = !snipEdit; renderSnips(); };
+    box.appendChild(edit);
     measureBar();
   }
   function removeSnip(i) {
     var list = snippets();
-    if (!confirm('Remove snippet "' + list[i] + '"?')) return;
-    list.splice(i, 1); LS.set('snippets', list); renderSnips();
+    sheet({ title: 'Remove this snippet?', body: list[i], confirm: 'Remove', danger: true }).then(function (ok) {
+      if (!ok) return;
+      list = snippets();
+      list.splice(i, 1); savePref('snippets', list); renderSnips();
+    });
   }
 
   // Draft autosave. A half-typed message lost to a backgrounded tab is the
@@ -1811,6 +2573,30 @@
     });
   }
 
+  // The file goes to uploads/ and the message gets its path, exactly as a share
+  // does. Nothing is sent until Send is pressed.
+  var hasAttachment = false;
+  $('attach-btn').onclick = function () { $('attach-file').click(); };
+  $('attach-file').onchange = function () {
+    var f = this.files && this.files[0];
+    this.value = '';
+    if (!f) return;
+    var btn = $('attach-btn');
+    btn.disabled = true;
+    var closeBusy = toast('Uploading ' + f.name + '…', { ms: 600000 });
+    fetch('/api/upload?name=' + encodeURIComponent(f.name), { method: 'POST', body: f, headers: authHeaders() })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); })
+      .then(function (j) {
+        var m = $('msg');
+        m.value = (m.value ? m.value.replace(/\s*$/, '\n') : '') + 'Attached file: ' + j.path;
+        hasAttachment = true;
+        saveDraft(); growMsg(); m.focus();
+        toast('Attached ' + f.name + '.', { kind: 'ok' });
+      })
+      .catch(function (e) { toast('Could not attach ' + f.name + ': ' + e.message, { kind: 'bad' }); })
+      .then(function () { closeBusy(); btn.disabled = false; });
+  };
+
   function send() {
     var text = $('msg').value.trim();
     if (!text) return;
@@ -1819,24 +2605,32 @@
     // of scheduling. Catch it here, where there is still someone to tell.
     if ($('when').value === 'at') {
       var at = whenAtTime();
-      if (!isFinite(at)) { alert('Pick a date and time first.'); $('when-at').focus(); return; }
-      if (at <= Date.now()) { alert('That time has already passed.'); $('when-at').focus(); return; }
+      if (!isFinite(at)) { toast('Pick a date and time first.', { kind: 'bad' }); $('when-at').focus(); return; }
+      if (at <= Date.now()) { toast('That time has already passed.', { kind: 'bad' }); $('when-at').focus(); return; }
     }
+    if ($('when').value === 'days' && !scheduleSpec('days').runAfter) { toast('Pick at least one day and a time.', { kind: 'bad' }); return; }
     var payload = Object.assign({
       message: text,
       thread: thread(),
       engine: $('engine').value,
       model: $('model').value,
+      attachment: hasAttachment,
       clientId: newClientId()
     }, scheduleSpec($('when').value));
     $('send').disabled = true;
     post('/api/inbox', payload).then(function () {
+      hasAttachment = false;
       $('msg').value = '';
       $('when').value = '';
       $('when-at').value = '';
       syncWhen();
       LS.set('draft', '');
       pollHealth(); pollScheduled();
+      pollQueue();
+      toast(payload.runAfter
+        ? 'Scheduled for ' + new Date(payload.runAfter).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' }) + '.'
+        : 'Queued in ' + payload.thread + '.', { kind: 'ok' });
+      growMsg();
     }).catch(function (e) {
       if (e.status === undefined) {
         // No HTTP status at all means the request never reached the server -
@@ -1845,15 +2639,14 @@
         var box = LS.get('outbox', []).concat([{ payload: payload, at: Date.now() }]).slice(-20);
         LS.set('outbox', box);
         renderOutbox();
-        var btn = $('send');
-        var was = btn.textContent;
-        btn.textContent = 'Parked';
-        setTimeout(function () { btn.textContent = was; }, 1600);
+        toast('No connection. Parked on this phone; it sends by itself when you are back online.');
+        hasAttachment = false;
         $('msg').value = '';
         LS.set('draft', '');
+        growMsg();
       } else {
         if (!$('msg').value.trim()) $('msg').value = text;
-        alert('Could not queue: ' + e.message);
+        toast('Could not queue the message: ' + e.message, { kind: 'bad' });
       }
     }).finally(function () { $('send').disabled = false; });
   }
@@ -1911,7 +2704,7 @@
           return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(key) });
         }).then(function (sub) {
           return post('/api/push/subscribe', sub.toJSON());
-        }).then(function () { note.textContent = 'Push is on.'; btn.textContent = 'Send test'; btn.onclick = function () { post('/api/push/test'); }; btn.disabled = false; });
+        }).then(function () { note.textContent = 'Push is on.'; pollDevices(); btn.textContent = 'Send test'; btn.onclick = function () { post('/api/push/test'); }; btn.disabled = false; });
       }).catch(function (e) { note.textContent = 'Push setup failed: ' + e.message; btn.disabled = false; });
     };
   }
@@ -1925,9 +2718,16 @@
   // Wiring
 
   $('send').onclick = send;
-  $('msg').addEventListener('input', function () { saveDraft(); measureBar(); });
+  // The ResizeObserver on .compose (bottom of the script) already re-measures when
+  // the box changes height; the direct call is only the fallback without one.
+  $('msg').addEventListener('input', function () { saveDraft(); growMsg(); if (!window.ResizeObserver) measureBar(); });
   $('msg').addEventListener('keydown', function (e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send();
+    // isComposing: Enter that commits an IME candidate must not send.
+    if (e.key === 'Enter' && !e.isComposing && !e.shiftKey &&
+        (e.metaKey || e.ctrlKey || LS.get('enterSends', false))) {
+      e.preventDefault();
+      send();
+    }
     if (e.key === 'Escape') this.blur();
   });
   $('outbox-btn').onclick = function () { flushOutbox(); };
@@ -1944,40 +2744,139 @@
     $('when').value = ''; $('when-at').value = ''; syncWhen();
   };
 
-  $('thread').onchange = function () { LS.set('thread', this.value); pollContext(); };
+  $('thread').onchange = function () { LS.set('thread', this.value); pollContext(); renderConversation(); };
+  $('convo-all').onclick = function () { setView('replies'); };
   $('thread-new').onclick = function () {
-    var name = prompt('Thread name (letters, numbers and dashes):');
-    if (!name) return;
-    LS.set('thread', name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
-    var o = document.createElement('option');
-    o.value = o.textContent = LS.get('thread', 'main');
-    $('thread').appendChild(o); $('thread').value = o.value;
-    pollContext();
+    sheet({ title: 'New thread', input: true, placeholder: 'letters, numbers and dashes', confirm: 'Create' }).then(function (name) {
+      if (!name) return;
+      LS.set('thread', name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+      var o = document.createElement('option');
+      o.value = o.textContent = LS.get('thread', 'main');
+      $('thread').appendChild(o); $('thread').value = o.value;
+      pollContext();
+      renderConversation();
+    });
   };
   $('thread-clear').onclick = function () {
-    if (!confirm('Clear the carried context and session for this thread?')) return;
-    post('/api/handover/clear', { thread: thread() }).then(pollContext);
+    sheet({ title: 'Clear this thread\'s context?', body: 'The carried summary and the agent session for "' + thread() + '" are removed. Past replies stay.', confirm: 'Clear context', danger: true }).then(function (ok) {
+      if (!ok) return;
+      post('/api/handover/clear', { thread: thread() }).then(pollContext);
+    });
   };
   $('run-kill').onclick = function () { post('/api/run/kill').then(pollHealth); };
   $('run-steer-go').onclick = function () {
     var text = $('run-steer').value.trim();
     if (!text) return;
     post('/api/run/nudge', { text: text }).then(function () { $('run-steer').value = ''; pollHealth(); })
-      .catch(function (e) { alert('Could not steer: ' + e.message); });
+      .catch(function (e) { toast('Could not steer the run: ' + e.message, { kind: 'bad' }); });
   };
   $('run-steer').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('run-steer-go').click(); });
   $('failed-retry').onclick = function () { post('/api/inbox/retry').then(function () { pollHealth(); }); };
   $('failed-dismiss').onclick = function () { post('/api/inbox/dismiss-failed').then(pollHealth); };
   $('scheduled').onclick = function (e) {
-    var id = e.target.getAttribute('data-cancel');
-    if (id) api('/api/inbox/scheduled?id=' + encodeURIComponent(id), { method: 'DELETE' }).then(pollScheduled);
+    var btn = e.target.closest ? e.target.closest('button') : null;
+    if (!btn || btn.disabled) return;
+    var cancel = btn.getAttribute('data-cancel'), pause = btn.getAttribute('data-pause'),
+      resume = btn.getAttribute('data-resume'), now = btn.getAttribute('data-now');
+    var done = function (msg) { return function () { pollScheduled(); pollQueue(); if (msg) toast(msg); }; };
+    var fail = function (err) { toast('Could not change the schedule: ' + err.message, { kind: 'bad' }); pollScheduled(); };
+    btn.disabled = true;
+    if (cancel) api('/api/inbox/scheduled?id=' + encodeURIComponent(cancel), { method: 'DELETE' }).then(done()).catch(fail);
+    else if (pause || resume) post('/api/inbox/scheduled/pause', { id: pause || resume, paused: !!pause }).then(done(pause ? 'Paused.' : 'Resumed.')).catch(fail);
+    else if (now) post('/api/inbox/scheduled/run-now', { id: now }).then(done('Running it now. The schedule is unchanged.')).catch(fail);
   };
+  // Monday first, as a week is read; data-day is Date.getDay()'s number.
+  ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach(function (name, i) {
+    var b = document.createElement('button');
+    b.className = 'snip'; b.textContent = name;
+    b.setAttribute('data-day', String((i + 1) % 7));
+    b.setAttribute('aria-pressed', 'false');
+    b.onclick = function () { b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); };
+    $('when-days').appendChild(b);
+  });
+  $('queue').onclick = function (e) {
+    var btn = e.target.closest ? e.target.closest('button') : null;
+    if (!btn || btn.disabled) return;
+    var tooLate = function (err) {
+      if (err.status === 404) toast('Too late - that message has already started.', { kind: 'bad' });
+      else toast('Could not change the queue: ' + err.message, { kind: 'bad' });
+      pollQueue();
+    };
+    var front = btn.getAttribute('data-front');
+    if (front) { post('/api/inbox/front', { id: front }).then(pollQueue).catch(tooLate); return; }
+    var drop = btn.getAttribute('data-drop');
+    if (!drop) return;
+    var doDrop = function () {
+      api('/api/inbox?id=' + encodeURIComponent(drop), { method: 'DELETE' })
+        .then(function () { pollQueue(); toast('Message cancelled.'); })
+        .catch(tooLate);
+    };
+    if (!btn.getAttribute('data-repeat')) { doDrop(); return; }
+    sheet({ title: 'Cancel this repeating message?', body: 'It is due now. Cancelling it here ends the repeat for good.', confirm: 'Cancel the repeat', danger: true })
+      .then(function (ok) { if (ok) doDrop(); });
+  };
+  $('push-devices').onclick = function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-remove]') : null;
+    if (!btn || btn.disabled) return;
+    sheet({ title: 'Stop notifying this device?', body: 'It can be subscribed again from that device.', confirm: 'Remove', danger: true }).then(function (ok) {
+      if (!ok) return;
+      btn.disabled = true;
+      api('/api/push/subs?id=' + encodeURIComponent(btn.getAttribute('data-remove')), { method: 'DELETE' })
+        .then(pollDevices)
+        .catch(function () { btn.disabled = false; btn.textContent = 'Remove failed - tap to retry'; });
+    });
+  };
+  // Saved only once both ends are set: half a window is not a window.
+  $('quiet-from').onchange = $('quiet-to').onchange = function () {
+    var from = $('quiet-from').value, to = $('quiet-to').value;
+    if (from && to) { savePref('quietHours', { from: from, to: to }); renderQuiet(); }
+  };
+  $('quiet-clear').onclick = function () { savePref('quietHours', null); $('quiet-from').value = $('quiet-to').value = ''; renderQuiet(); };
   $('opt-vibrate').checked = LS.get('vibrate', true);
   $('opt-vibrate').onchange = function () { LS.set('vibrate', this.checked); };
   $('opt-wake').checked = LS.get('wake', false);
   $('opt-wake').disabled = !('wakeLock' in navigator);
   $('wake-note').textContent = 'wakeLock' in navigator ? '' : 'This browser has no Screen Wake Lock.';
   $('opt-wake').onchange = function () { LS.set('wake', this.checked); syncWakeLock(); };
+  $('opt-enter').checked = LS.get('enterSends', false);
+  $('opt-enter').onchange = function () { LS.set('enterSends', this.checked); syncEnterHint(); };
+  syncEnterHint();
+
+  // The same two fields the server searches. Filtering on the reply alone threw
+  // away every result the server had matched on the prompt.
+  function matchesQuery(n, q) {
+    if (!q) return true;
+    var needle = String(q).toLowerCase();
+    return String(n.message || '').toLowerCase().indexOf(needle) !== -1 ||
+      String(n.prompt || '').toLowerCase().indexOf(needle) !== -1;
+  }
+
+  // Wraps matches in <mark> by walking TEXT NODES, never by editing HTML, so a
+  // query can never produce markup.
+  function highlight(root, q) {
+    if (!q) return;
+    var needle = q.toLowerCase();
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function (node) {
+      var text = node.nodeValue;
+      var at = text.toLowerCase().indexOf(needle);
+      if (at === -1) return;
+      var frag = document.createDocumentFragment();
+      var pos = 0;
+      while (at !== -1) {
+        frag.appendChild(document.createTextNode(text.slice(pos, at)));
+        var m = document.createElement('mark');
+        m.textContent = text.slice(at, at + needle.length);
+        frag.appendChild(m);
+        pos = at + needle.length;
+        at = text.toLowerCase().indexOf(needle, pos);
+      }
+      frag.appendChild(document.createTextNode(text.slice(pos)));
+      node.parentNode.replaceChild(frag, node);
+    });
+  }
 
   function runSearch() {
     var q = $('search').value.trim();
@@ -1988,21 +2887,46 @@
       api('/api/messages?limit=100&q=' + encodeURIComponent(q)).catch(function () { return null; }),
       api('/api/notifications').catch(function () { return { items: [] }; })
     ]).then(function (r) {
-      if (!r[0]) { $('search-note').textContent = 'Archive unreachable - showing recent replies only.'; renderReplies(r[1].items); return; }
+      if (!r[0]) { $('search-note').textContent = 'Archive unreachable - showing recent replies only.'; repliesKey = null; renderReplies(r[1].items); return; }
       var byId = {};
       r[0].items.concat(r[1].items).forEach(function (n) { byId[n.id] = n; });
       var merged = Object.keys(byId).map(function (k) { return byId[k]; })
-        .filter(function (n) { return !q || String(n.message).toLowerCase().indexOf(q.toLowerCase()) !== -1; })
+        .filter(function (n) { return matchesQuery(n, q); })
         .sort(function (a, b) { return b.at - a.at; });
-      $('search-note').textContent = q ? merged.length + ' match(es) across ' + r[0].total + ' archived' : '';
+      $('search-note').textContent = q ? merged.length + ' match(es) across ' + r[0].total + ' archived' +
+        (r[0].truncated ? ' Older archive files exist and were not searched.' : '') : '';
+      repliesKey = null;
       renderReplies(merged.slice(0, 100));
+      highlight($('replies'), q);
     });
   }
   $('search-go').onclick = runSearch;
-  $('search').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') runSearch();
-    if (e.key === 'Escape') { this.value = ''; this.blur(); pollNotifications(); }
+  var searchTimer = null;
+  $('search').addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    var q = this.value.trim();
+    // One character matches nearly everything; wait for two, and for a pause.
+    searchTimer = setTimeout(function () {
+      if (!q) { $('search-note').textContent = ''; repliesKey = null; pollNotifications(); return; }
+      if (q.length >= 2) runSearch();
+    }, 300);
   });
+  $('search').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { clearTimeout(searchTimer); runSearch(); }
+    if (e.key === 'Escape') { this.value = ''; this.blur(); $('search-note').textContent = ''; repliesKey = null; pollNotifications(); }
+  });
+
+  $('older').onclick = function () {
+    var oldest = allReplies.length ? allReplies[allReplies.length - 1].at : Date.now();
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Loading';
+    api('/api/messages?limit=30&before=' + oldest).then(function (r) {
+      btn.disabled = false; btn.textContent = 'Load older replies';
+      if (!r.items.length) { btn.classList.add('hidden'); toast('That is every reply in the archive.'); return; }
+      repliesKey = null;
+      renderReplies(allReplies.concat(r.items));
+    }).catch(function (e) { btn.disabled = false; btn.textContent = 'Load older replies'; toast('Could not load older replies: ' + e.message, { kind: 'bad' }); });
+  };
 
   $('log-go').onclick = function () {
     api('/api/logs?tail=200&file=' + encodeURIComponent($('log-file').value))
@@ -2015,7 +2939,7 @@
     if (!q) { box.innerHTML = ''; return; }
     api('/api/artifacts/search?limit=50&q=' + encodeURIComponent(q)).then(function (r) {
       box.innerHTML = r.items.length ? r.items.map(function (a) {
-        return '<li><a class="grow small" href="/artifacts/' + encodeURIComponent(a.name) + '?token=' + encodeURIComponent(TOKEN) + '" target="_blank" rel="noopener">' + esc(a.name) + '</a></li>' +
+        return '<li><a class="grow small" href="/artifacts/' + encodeURIComponent(a.name) + '" target="_blank" rel="noopener">' + esc(a.name) + '</a></li>' +
           (a.snippet ? '<li class="tiny muted" style="border-top:0;padding-top:0">' + esc(a.snippet) + '</li>' : '');
       }).join('') : '<li class="empty">No matches.</li>';
     }).catch(function (e) { box.innerHTML = '<li class="empty">search failed: ' + esc(e.message) + '</li>'; });
@@ -2038,13 +2962,15 @@
   $('art-prune-delete').onclick = function () {
     var boxes = Array.prototype.slice.call($('art-prune-list').querySelectorAll('input[type=checkbox]:checked'));
     if (!boxes.length) return;
-    if (!confirm('Delete ' + boxes.length + ' artifact(s)? This cannot be undone.')) return;
-    Promise.all(boxes.map(function (b) {
-      return api('/artifacts/' + encodeURIComponent(b.getAttribute('data-name')), { method: 'DELETE' }).catch(function () {});
-    })).then(function () {
-      $('art-prune-list').innerHTML = '';
-      $('art-prune-delete').classList.add('hidden');
-      pollArtifacts();
+    sheet({ title: 'Delete ' + boxes.length + ' artifact(s)?', body: 'This cannot be undone.', confirm: 'Delete', danger: true }).then(function (ok) {
+      if (!ok) return;
+      Promise.all(boxes.map(function (b) {
+        return api('/artifacts/' + encodeURIComponent(b.getAttribute('data-name')), { method: 'DELETE' }).catch(function () {});
+      })).then(function () {
+        $('art-prune-list').innerHTML = '';
+        $('art-prune-delete').classList.add('hidden');
+        pollArtifacts();
+      });
     });
   };
 
@@ -2066,7 +2992,7 @@
   // an old worker has no message handler and does not reply at all, so "no
   // answer" and "old worker" look identical from here - a non-answer is never
   // read as "no worker registered".
-  var REQUIRED_SW_VERSION = 3;
+  var REQUIRED_SW_VERSION = 6;
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').then(function (reg) {
       setTimeout(function () {
@@ -2083,8 +3009,20 @@
   }
 
   window.addEventListener('online', flushOutbox);
+  // A hidden tab kept five timers and an open stream going for as long as the
+  // phone was in a pocket. A pending approval still reaches it: that is what
+  // the push notification is for.
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) return;
+    if (document.hidden) {
+      stopTimers();
+      clearTimeout(reconnectTimer);
+      if (es) { es.close(); es = null; }
+      streamOk = false;
+      return;
+    }
+    retime();
+    connectStream();
+    pollHealth(); pollState(); pollNotifications(); pollContext(); pollScheduled(); pollQueue();
     flushOutbox();
     syncWakeLock();
   });
@@ -2132,8 +3070,8 @@
     if (!st) return;
     history.replaceState(null, '', location.pathname + '?token=' + encodeURIComponent(TOKEN));
     setView('now');
-    if (st === 'missed') { alert('That share arrived before Halyard was ready to catch it - please share it again.'); return; }
-    if (st === 'failed' || !window.caches) { alert('The share could not be read - please share it again.'); return; }
+    if (st === 'missed') { toast('That share arrived before Halyard was ready. Share it again.', { kind: 'bad' }); return; }
+    if (st === 'failed' || !window.caches) { toast('The share could not be read. Share it again.', { kind: 'bad' }); return; }
     caches.open('halyard-share').then(function (cache) {
       return cache.match('/__share/meta').then(function (r) { return r ? r.json() : null; }).then(function (meta) {
         if (!meta) return;
@@ -2141,13 +3079,13 @@
         var add = function (extra) {
           var cur = $('msg').value.trim();
           $('msg').value = (cur ? cur + '\n\n' : '') + parts.concat(extra ? [extra] : []).join('\n');
-          saveDraft(); measureBar(); $('msg').focus();
+          saveDraft(); growMsg(); measureBar(); $('msg').focus();
         };
         var done = function () { cache.delete('/__share/meta'); cache.delete('/__share/file'); };
         if (!meta.fileName) { add(''); done(); return; }
         return cache.match('/__share/file').then(function (fr) { return fr ? fr.blob() : null; }).then(function (blob) {
           if (!blob) { add(''); done(); return; }
-          return fetch('/api/upload?token=' + encodeURIComponent(TOKEN) + '&name=' + encodeURIComponent(meta.fileName), { method: 'POST', body: blob })
+          return fetch('/api/upload?name=' + encodeURIComponent(meta.fileName), { method: 'POST', body: blob, headers: authHeaders() })
             .then(function (r) { return r.json(); })
             .then(function (j) { add('Attached file: ' + j.path); done(); })
             .catch(function () { add('(the shared file ' + meta.fileName + ' could not be uploaded)'); done(); });
@@ -2156,9 +3094,36 @@
     }).catch(function () {});
   }
 
+  // ---------------------------------------------------------------------
+  // First-run tour. Three screens, once per device, dismissible at any point;
+  // System -> "Show the tour again" brings it back.
+  var TOUR = [
+    ['Message your computer', 'Type at the bottom and press Send. The assistant on your computer does the work and its answer appears on Now and under Replies - even if you close this page.'],
+    ['You stay in charge', 'Before anything risky - publishing code, deleting folders, sending data out - your phone asks Approve or Deny. Nothing happens until you tap. Missed one? It waits under "needs your tap".'],
+    ['Keep going later', 'Threads keep separate conversations. Work holds files the assistant made, things scheduled for later, and what it has cost. System shows whether everything is healthy.']
+  ];
+  var tourAt = 0;
+  function showTour(i) {
+    tourAt = i;
+    $('tour-title').textContent = TOUR[i][0];
+    $('tour-text').textContent = TOUR[i][1];
+    var dots = $('tour-dots').children;
+    for (var k = 0; k < dots.length; k++) dots[k].classList.toggle('on', k === i);
+    $('tour-next').textContent = i === TOUR.length - 1 ? 'Got it' : 'Next';
+    $('tour').classList.remove('hidden');
+    $('tour-next').focus();
+  }
+  function endTour() { $('tour').classList.add('hidden'); LS.set('toured', true); }
+  $('tour-next').onclick = function () { if (tourAt < TOUR.length - 1) showTour(tourAt + 1); else endTour(); };
+  $('tour-skip').onclick = endTour;
+  $('tour').addEventListener('keydown', function (e) { if (e.key === 'Escape') endTour(); });
+  window.halyardTour = function () { showTour(0); };
+  $('tour-again').onclick = function () { showTour(0); };
+
   // Kick off
   $('thread').innerHTML = '<option>' + esc(LS.get('thread', 'main')) + '</option>';
   $('msg').value = LS.get('draft', '');
+  growMsg();
   [document.querySelector('.rail'), $('snips'), $('thread-filter')].forEach(scrollCue);
   if (window.ResizeObserver) new ResizeObserver(measureBar).observe(document.querySelector('.compose'));
   setView(view);
@@ -2166,8 +3131,9 @@
   renderSnips();
   renderOutbox();
   pollHealth().then(fillEngines);
-  pollState(); pollNotifications(); pollContext(); pollArtifacts(); pollScheduled();
+  pollState(); pollNotifications(); pollContext(); pollArtifacts(); pollScheduled(); pollQueue(); loadPrefs();
   pickUpShare();
+  if (!LS.get('toured', false)) showTour(0);
   renderPinned();
   setupPush();
   retime();
@@ -2176,8 +3142,13 @@
   // both relative, and a clock that only advances when the server speaks
   // makes a live page look frozen.
   setInterval(function () {
-    if (health && health.activeRun) renderRunBox(health.activeRun);
-    if (lastContact) setConn(Date.now() - lastContact < 30000);
+    if (document.hidden) return;
+    tickElapsed();
+    tickAsk();
+    // Stream up: pings arrive every 25 s, so 60 s is two missed pings plus
+    // slack. Stream down: health is polled every 4 s, so 15 s is three missed
+    // polls plus slack.
+    if (lastContact) setConn(Date.now() - lastContact < (streamOk ? 60000 : 15000));
   }, 1000);
 })();
 </script>
