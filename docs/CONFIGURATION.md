@@ -72,6 +72,7 @@ returns.
 | `relay.timeoutMs` | `300000` | No answer inside this window is a **deny**. |
 | `relay.rules` | all five | `git`, `destructive-fs`, `network-egress`, `secret-egress`, `tainted-egress` (see [SECURITY.md](../SECURITY.md#what-it-matches)). Trim if a category is pure noise for you. An **empty or unset** list means all of them, never none. A config file written before the last two existed lists only three, and so leaves them off - add them. |
 | `relay.privateMergeWithoutTap` | `false` | `gh pr merge` on a repo GitHub reports as **PRIVATE** passes with no tap. Only a lone `gh pr merge` (optionally after one `cd <dir> &&`) qualifies, never in a run that has read untrusted content, and anything but a clean `PRIVATE` answer from `gh repo view` relays as usual. Public repos always relay. |
+| `relay.runScopedRules` | `["git"]` | Rule families the full approval card may approve **for the rest of the current run** with one tap. Ends with the run; every auto-approval is logged and listed in the run's steps (see [SECURITY.md](../SECURITY.md#approve-for-the-rest-of-a-run)). Listing anything other than `git` makes the audit warn. `[]` removes the option. A single string is read as a one-item list. |
 
 The hooks run inside the agent's process, not inside Halyard, so the watcher hands them this
 install's settings through the environment of every run it starts: `HALYARD_DATA_DIR`,
@@ -90,6 +91,12 @@ more, so the relay asks again while you are there; it never runs the command its
 |---|---|---|
 | `usageGuard.maxPercent` | `0` (off) | If any of Claude Code's subscription usage windows is at or above this, a due message stays **queued** rather than popped, and the phone is told. It starts by itself once usage drops. |
 | `usageGuard.announceEveryMs` | `1800000` | A long hold is announced at most once per this window, so it does not flood the reply list. |
+| `spendGuard.dailyUsd` | `0` (off) | When today's recorded run cost (machine local day) reaches this, a due message stays **queued** and the phone is told; it starts by itself after midnight. Only runs that report a cost count. The check happens before each pop, so it can overshoot by at most one run's cost. A cap is meaningful from about $1 upwards (a typical run is $0.01-$0.10). Env: `HALYARD_SPEND_DAILY_USD`. |
+| `spendGuard.announceEveryMs` | `1800000` | A long hold is announced at most once per this window. |
+| `threadWorkspaces` | `{}` | Threads that run in a different directory from `workspace`: `{ "homelab": "~/lab" }`. Keys are thread names in slug form. Config only, never editable from the phone, because the workspace is the boundary of what the agent may touch. An agent session belongs to the directory it was created in, so changing a thread's mapping makes its stored session unresolvable; engines that define `staleSessionError` retake the turn as a new session. `halyard doctor` warns when a mapped directory does not exist or contains your home directory. |
+| `watchdog.staleMs` | `600000` (10 min) | A message that has been due this long, with no run in flight and no guard holding the queue, means nothing is consuming the queue. The phone gets one notice per stuck message. `0` disables it. If you run `halyard watch` from a timer less often than every ten minutes, raise this above the timer period. |
+| `diff.enabled` | `true` | After a run that edited files in a git workspace, write the changes since the run started to `artifacts/diff-<runId>.html` and link it from the reply. Read-only git; no git is spawned when off or when the workspace is not a repository. |
+| `diff.timeoutMs` / `diff.maxBytes` | `10000` / `524288` | Bounds on each git call. A diff larger than `maxBytes` is replaced by the note "Diff too large to attach." |
 
 Decides **before** the pop (a guard that popped first could only drop the message), and
 **fails open**: no stored Claude sign-in, an error from the usage endpoint, or no gauges all
@@ -152,8 +159,10 @@ ping-pong it forever.
 | `maxUploadBytes` | 25 MB | Over the limit is a 413, never a silent truncation. |
 | `notificationRing` | `30` | Replies kept in memory. The archive keeps everything. |
 | `transcriptRing` | `200` | Live step lines kept per engine. |
-| `archiveMaxBytes` | 4 MB | `replies.jsonl` and `runs.jsonl` compact to their newer half past this. |
+| `archiveMaxBytes` | 4 MB | Rotation size: `replies.jsonl` and `runs.jsonl` move whole into `archive/<name>-<epoch ms>.jsonl` past this and a fresh file starts. Nothing is dropped. |
+| `archiveSearchFiles` | `12` | Rotated archive files a search or spend rollup reads, newest first, besides the live one. Older files stay on disk and a delete still reaches them. |
 | `watchIntervalMs` | `60000` | The safety net. The server nudges the watcher the instant a message is queued, so this only catches what a nudge missed. |
+| `ssePingMs` | `25000` | How often the change stream sends a `ping` event. The page treats any stream message as contact and flags the bridge offline after 60 s of silence, so keep this at or below 28000 or the connection indicator will flap. |
 | `logLevel` | `info` | `debug` `info` `warn` `error`. |
 
 ## Environment variables
@@ -167,6 +176,7 @@ HALYARD_PUBLIC_URL      HALYARD_ENGINE          HALYARD_WORKSPACE
 HALYARD_PERMISSION_MODE HALYARD_RELAY           HALYARD_NTFY_TOPIC
 HALYARD_LOG_LEVEL       HALYARD_RELAY_RULES     HALYARD_RELAY_TIMEOUT_MS
 HALYARD_USAGE_MAX_PERCENT                       HALYARD_BACKGROUND_MODEL
+HALYARD_SPEND_DAILY_USD
 ```
 
 ## CLI flags

@@ -112,7 +112,7 @@ async function main() {
   const ctx = {
     cfg, paths, log, token, warnings: [],
     pushKeys: () => null, pushSubs: () => subs,
-    addPushSub: (s) => { subs = subs.concat(s); }, removePushSub: () => {},
+    addPushSub: (s) => { subs = subs.concat(s); }, removePushSub: (endpoint) => { subs = subs.filter((s) => s.endpoint !== endpoint); },
     nudge: () => {},
   };
   const app = createServer(ctx);

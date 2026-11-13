@@ -203,7 +203,10 @@ function copilotJson(line, result) {
 
 function plainText(line, result) {
   result.replyLines.push(String(line));
-  result.reply = result.replyLines.join('\n');
+  // Appended, not re-joined. Joining every line received so far on each new
+  // line is quadratic, and a script that prints ten thousand lines is exactly
+  // the kind this engine exists for.
+  result.reply = result.replyLines.length > 1 ? `${result.reply}\n${line}` : String(line);
   return null;
 }
 

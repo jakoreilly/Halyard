@@ -140,6 +140,19 @@ function encryptPayload(plaintext, uaPublicB64, authSecretB64) {
 // ---------------------------------------------------------------------------
 // Delivery
 
+// The header is a signed JWT valid for 12 h. Signing one per notification per
+// device is wasted work; one per push service per 6 h is enough, and still
+// leaves 6 h of validity on the oldest one handed out.
+const vapidCache = new Map();
+function cachedVapidHeader(endpoint, keys, subject) {
+  const key = `${new URL(endpoint).origin}|${keys.publicKey}|${subject}`;
+  const hit = vapidCache.get(key);
+  if (hit && Date.now() - hit.at < 6 * 3600 * 1000) return hit.value;
+  const value = vapidHeader(endpoint, keys, subject);
+  vapidCache.set(key, { at: Date.now(), value });
+  return value;
+}
+
 // Resolves to { ok, status, gone } rather than throwing. `gone` (404/410) is the
 // push service saying this subscription is permanently dead - the caller prunes
 // on that and only on that, so a transient 5xx never silently unsubscribes a
@@ -156,9 +169,10 @@ async function sendNotification(subscription, payload, keys, subject, ttlSeconds
         'Content-Encoding': 'aes128gcm',
         'Content-Type': 'application/octet-stream',
         TTL: String(ttlSeconds),
-        Authorization: vapidHeader(endpoint, keys, subject),
+        Authorization: cachedVapidHeader(endpoint, keys, subject),
       },
       body,
+      signal: AbortSignal.timeout(10000),
     });
     return { ok: res.ok, status: res.status, gone: res.status === 404 || res.status === 410 };
   } catch (e) {

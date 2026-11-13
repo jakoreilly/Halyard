@@ -15,6 +15,9 @@ const MAX_BYTES = 8 * 1024 * 1024;
 function createLogger(file, level = 'info') {
   const min = LEVELS[level] || LEVELS.info;
 
+  let ready = false;
+  let sinceCheck = 0;
+
   function rotate() {
     try {
       const st = fs.statSync(file);
@@ -37,8 +40,11 @@ function createLogger(file, level = 'info') {
       (lvl === 'error' || lvl === 'warn' ? process.stderr : process.stdout).write(`${line}\n`);
     }
     try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      rotate();
+      // The directory is made once. The size check runs every 200 lines: a
+      // tight retry loop still rotates within a few hundred lines of the limit,
+      // and an ordinary line is one syscall instead of three.
+      if (!ready) { fs.mkdirSync(path.dirname(file), { recursive: true }); ready = true; }
+      if (sinceCheck++ % 200 === 0) rotate();
       fs.appendFileSync(file, `${line}\n`);
     } catch (e) {
       // Losing a log line is strictly better than crashing the process that

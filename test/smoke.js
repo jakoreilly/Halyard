@@ -481,6 +481,11 @@ check('sw.js: nothing token-gated may be precached, and install cannot fail', ()
   const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const required = /REQUIRED_SW_VERSION = (\d+)/.exec(page);
   assert.ok(required && Number(required[1]) === Number(/SW_VERSION = (\d+)/.exec(sw)[1]), 'SW_VERSION and the page REQUIRED_SW_VERSION must be bumped together');
+  assert.ok(/payload\.review/.test(sw), 'a truncated command must not be answerable from the notification');
+  // The shell is token-gated, so it may only ever be cached at runtime.
+  assert.ok(!/SHELL_URLS\s*=\s*\[[^\]]*['"]\/['"]/.test(sw), 'the shell must not be precached');
+  assert.ok(/mode === 'navigate'/.test(sw) && /PAGE_KEY/.test(sw), 'the shell is cached from a real navigation');
+  assert.ok(/if \(res\.ok\) cache\.put\(PAGE_KEY/.test(sw), 'a 401 page must never replace the cached shell');
   // Answering an `ask` must go to /api/answer, never /api/inbox - the latter
   // would silently start an unrelated new conversation turn.
   assert.ok(/data\.kind === ['"]ask['"]/.test(sw), "a free-text reply to an ask must be told apart from an ordinary reply notification");
@@ -496,6 +501,7 @@ check('index.html: the inline script parses', () => {
   // The page must escape before it re-adds markup.
   assert.ok(/function esc\(/.test(scripts.join('')), 'renderRich must escape first');
   const src = scripts.join('');
+  assert.ok(/var lines = esc\(/.test(src), 'renderRich must escape before it builds markup');
   assert.ok(/function pinToggle\(/.test(src) && /function renderPinned\(/.test(src), 'pin/unpin must be wired');
   assert.ok(/newClientId\(\)/.test(src), 'a queued message must carry a clientId for the outbox to de-dupe on retry');
   assert.ok(/function flushOutbox\(/.test(src), 'the outbox must be flushed somewhere');
@@ -524,6 +530,18 @@ check('the agent is told where secrets live, and given the directory', () => {
 // ---------------------------------------------------------------------------
 // The live server
 
+// A raw GET. fetch() follows redirects, transparently decompresses and may
+// refuse to send sec-fetch-* headers, all of which hide what a check needs.
+function rawGet(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    require('http').get(url, { headers }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    }).on('error', reject);
+  });
+}
+
 async function withServer(fn, opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-test-'));
   const paths = pathsmod.ensure(pathsmod.layout(dir));
@@ -536,7 +554,7 @@ async function withServer(fn, opts = {}) {
     pushKeys: () => null,
     pushSubs: () => subs,
     addPushSub: (s) => { subs = subs.concat(s); },
-    removePushSub: () => {},
+    removePushSub: (endpoint) => { subs = subs.filter((s) => s.endpoint !== endpoint); },
     nudge: () => {},
     ...(opts.ctx || {}),
   };
@@ -566,6 +584,84 @@ async function withServer(fn, opts = {}) {
 }
 
 async function main() {
+  // An artifact is agent-written HTML on the API's own origin. Unsandboxed, its
+  // script could POST /api/answer with the session cookie and approve its own
+  // relay question.
+  await checkAsync('artifacts: scriptable types are sandboxed, and a navigation loses its token', () => withServer(async ({ base, token, paths }) => {
+    fs.writeFileSync(path.join(paths.artifacts, 'r.html'), '<html><body><script>1</script></body></html>');
+    fs.writeFileSync(path.join(paths.artifacts, 'd.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    fs.writeFileSync(path.join(paths.artifacts, 'n.txt'), 'x');
+    for (const f of ['r.html', 'd.svg']) {
+      const r = await rawGet(`${base}/artifacts/${f}?token=${token}`);
+      const csp = r.headers['content-security-policy'] || '';
+      assert.strictEqual(r.status, 200);
+      assert.ok(/^sandbox\b/.test(csp), `${f} is not sandboxed: "${csp}"`);
+      assert.ok(!/allow-same-origin|allow-top-navigation|allow-forms/.test(csp), `${f} sandbox is too loose: "${csp}"`);
+    }
+    assert.strictEqual((await rawGet(`${base}/artifacts/n.txt?token=${token}`)).headers['content-security-policy'], undefined);
+    const nav = await rawGet(`${base}/artifacts/r.html?token=${token}&x=1`, { 'sec-fetch-dest': 'document' });
+    assert.strictEqual(nav.status, 303);
+    assert.strictEqual(nav.headers.location, '/artifacts/r.html?x=1');
+    assert.ok(/halyard_token=/.test(String(nav.headers['set-cookie'])), 'the redirect must carry the cookie it relies on');
+  }));
+
+  // The options were passed to deliver() and dropped before the payload was
+  // built, so no relay notification ever showed Approve / Deny.
+  const askKeys = push.generateVapidKeys();
+  await checkAsync('ask: the push payload carries the options, and a long command asks for review', () => withServer(async ({ call }) => {
+    const sent = [];
+    // deliver() is reached through push.sendNotification; capture the payload.
+    const orig = push.sendNotification;
+    push.sendNotification = async (sub, payload) => { sent.push(JSON.parse(payload)); return { ok: true, status: 201, gone: false }; };
+    try {
+      await call('POST', '/api/ask', { question: 'Approve?', command: 'git push', options: ['Approve', 'Deny'] });
+      await call('POST', '/api/ask', { question: 'Approve?', command: 'x'.repeat(500), options: ['Approve', 'Deny'] });
+      await new Promise((r) => setTimeout(r, 50));
+    } finally { push.sendNotification = orig; }
+    assert.deepStrictEqual(sent[0].actions, ['Approve', 'Deny']);
+    assert.strictEqual(sent[0].review, undefined);
+    assert.strictEqual(sent[1].review, true);
+  }, { ctx: { pushKeys: () => askKeys, pushSubs: () => [{ endpoint: 'https://push.example/x', keys: { p256dh: 'a', auth: 'b' } }] } }));
+
+  await checkAsync('shell: framing and referrer headers, and a report-only CSP that hashes the inline script', () => withServer(async ({ base, token }) => {
+    for (const p of ['/', '/secrets']) {
+      const r = await rawGet(`${base}${p}?token=${token}`);
+      assert.strictEqual(r.status, 200);
+      assert.strictEqual(r.headers['referrer-policy'], 'no-referrer');
+      assert.strictEqual(r.headers['x-frame-options'], 'DENY');
+      const m = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/.exec(r.body.toString('utf8'));
+      const want = crypto.createHash('sha256').update(m[1], 'utf8').digest('base64');
+      assert.ok(r.headers['content-security-policy-report-only'].includes(`'sha256-${want}'`), `${p}: the policy must hash the script it serves`);
+      // Enforcing is the owner's call after checking a browser console.
+      assert.strictEqual(r.headers['content-security-policy'], undefined);
+    }
+  }));
+
+  await checkAsync('push: a device can be listed and removed, and the listing never leaks an endpoint', () => withServer(async ({ call }) => {
+    const sub = { endpoint: 'https://push.example/abc-secret-capability', keys: { p256dh: 'p', auth: 'a' } };
+    assert.strictEqual((await call('POST', '/api/push/subscribe', sub)).status, 200);
+    const list = (await call('GET', '/api/push/subs')).body.items;
+    assert.strictEqual(list.length, 1);
+    assert.strictEqual(list[0].host, 'push.example');
+    assert.ok(!JSON.stringify(list).includes('abc-secret-capability'), 'the endpoint is the capability to push and must not be listed');
+    assert.strictEqual((await call('DELETE', '/api/push/subs?id=nope')).status, 404);
+    assert.strictEqual((await call('DELETE', `/api/push/subs?id=${list[0].id}`)).status, 200);
+    assert.strictEqual((await call('GET', '/api/push/subs')).body.items.length, 0);
+  }));
+
+  check('index.html: fetches authenticate with a header, not the URL', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const sites = html.split('\n').filter((l) => /token=/.test(l) && !/^\s*\/\//.test(l));
+    // Exactly three remain: the EventSource fallback, the share pick-up's
+    // replaceState, and the regex in shareableText that STRIPS tokens.
+    assert.strictEqual(sites.length, 3, sites.join('\n'));
+  });
+
+  check('index.html: no artifact link carries the token', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    assert.ok(!/artifacts\/[^\n]*token=/.test(html), 'an artifact URL with the token hands it to the artifact script');
+  });
+
   await checkAsync('auth: no token is 401, a wrong token is 401', () => withServer(async ({ base }) => {
     assert.strictEqual((await fetch(`${base}/api/health`)).status, 401);
     assert.strictEqual((await fetch(`${base}/api/health?token=nope`)).status, 401);
@@ -624,7 +720,19 @@ async function main() {
     assert.strictEqual(page.headers.get('cache-control'), 'no-store');
   }));
 
-  await checkAsync('queue: push, peek, pop, and the pop is destructive', () => withServer(async ({ call }) => {
+  await checkAsync('queue: a waiting message can be cancelled or moved to the front, and a popped one cannot', () => withServer(async ({ call }) => {
+    const a = (await call('POST', '/api/inbox', { message: 'a' })).body.id;
+    const b = (await call('POST', '/api/inbox', { message: 'b' })).body.id;
+    assert.strictEqual((await call('POST', '/api/inbox/front', { id: b })).status, 200);
+    assert.deepStrictEqual((await call('GET', '/api/inbox')).body.items.map((i) => i.id), [b, a]);
+    assert.strictEqual((await call('DELETE', `/api/inbox?id=${a}`)).status, 200);
+    assert.strictEqual((await call('POST', '/api/inbox/pop')).body.item.id, b);
+    // Already popped: the phone must be told, not answered with a 200.
+    assert.strictEqual((await call('DELETE', `/api/inbox?id=${b}`)).status, 404);
+    assert.strictEqual((await call('POST', '/api/inbox/front', { id: b })).status, 404);
+  }));
+
+await checkAsync('queue: push, peek, pop, and the pop is destructive', () => withServer(async ({ call }) => {
     await call('POST', '/api/inbox', { message: 'first' });
     await call('POST', '/api/inbox', { message: 'second' });
     assert.strictEqual((await call('GET', '/api/health')).body.queued, 2);
@@ -1611,6 +1719,671 @@ async function main() {
     assert.ok(tour, 'TOUR not found');
     assert.strictEqual((tour[1].match(/^\s*\['/gm) || []).length, 3);
     assert.ok(/id="tour-skip"/.test(html) && /LS\.set\('toured', true\)/.test(html) && /if \(!LS\.get\('toured', false\)\) showTour\(0\)/.test(html));
+  });
+
+  check('atomic: a write replaces the file whole and leaves no temp file behind', () => {
+    const { writeFileAtomic } = require('../src/atomic');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-atomic-'));
+    const f = path.join(dir, 'state.json');
+    writeFileAtomic(f, '{"a":1}');
+    writeFileAtomic(f, '{"a":2}');
+    assert.strictEqual(fs.readFileSync(f, 'utf8'), '{"a":2}');
+    assert.deepStrictEqual(fs.readdirSync(dir), ['state.json']);
+  });
+
+  // state.json was written in place: a crash mid-write left truncated JSON and
+  // the next start silently began with an empty queue.
+  await checkAsync('state: a truncated state.json falls back to the last good copy', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-state-'));
+    const paths = pathsmod.ensure(pathsmod.layout(dir));
+    const mk = () => createServer({
+      cfg: configmod.load({ file: null, env: {}, cli: { port: 0, workspace: dir } }),
+      paths, log: createLogger(path.join(dir, 't.log'), 'error'), token: 't', warnings: [],
+      pushKeys: () => null, pushSubs: () => [], addPushSub: () => {}, removePushSub: () => {}, nudge: () => {},
+    });
+    fs.writeFileSync(paths.state, JSON.stringify({ inbox: [{ id: 'keep', message: 'm', at: 1 }], notifications: [] }));
+    const first = mk();          // parses, and takes the .bak copy
+    await first.close();
+    fs.writeFileSync(paths.state, '{"inbox":[{"id":"ke');   // torn
+    const second = mk();
+    assert.deepStrictEqual(second.state.inbox.map((i) => i.id), ['keep']);
+    await second.close();
+  });
+
+  // The archive used to drop its oldest half at archiveMaxBytes, silently.
+  check('archive: passing the size limit rotates the file, and nothing is lost', () => {
+    const archive = require('../src/archive');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-arch-'));
+    const f = path.join(dir, 'replies.jsonl');
+    for (let i = 0; i < 40; i++) archive.append(f, { id: `r${i}`, message: 'x'.repeat(100) }, 1000);
+    assert.ok(archive.rotated(f).length >= 3, 'the file should have rotated several times');
+    const all = archive.readAll(f, { maxFiles: 100 });
+    assert.strictEqual(all.items.length, 40, 'every entry must still be readable');
+    assert.strictEqual(all.truncated, false);
+    assert.strictEqual(archive.readAll(f, { maxFiles: 1 }).truncated, true);
+    assert.strictEqual(archive.removeById(f, 'r0'), 1, 'a delete reaches the oldest rotated file');
+    assert.ok(!archive.readAll(f, { maxFiles: 100 }).items.some((n) => n.id === 'r0'));
+  });
+
+  // An unhandled 'error' on the read stream used to be an uncaught exception.
+  await checkAsync('static: a read error mid-send does not take the server down', () => withServer(async ({ base, token, paths, call }) => {
+    fs.writeFileSync(path.join(paths.artifacts, 'gone.txt'), 'x'.repeat(10));
+    const orig = fs.createReadStream;
+    fs.createReadStream = () => new (require('stream').Readable)({ read() { this.destroy(new Error('EBUSY: simulated')); } });
+    try {
+      await fetch(`${base}/artifacts/gone.txt?token=${token}`).then((r) => r.text()).catch(() => {});
+    } finally { fs.createReadStream = orig; }
+    assert.strictEqual((await call('GET', '/api/health')).status, 200, 'the server must still be answering');
+  }));
+
+  await checkAsync('retry: a failed background message is retried as a background message', () => withServer(async ({ call }) => {
+    await call('POST', '/api/run/failed', { reason: 'x', item: { message: 'chore', thread: 'main', engine: 'claude', model: '', background: true, rerouted: true } });
+    await call('POST', '/api/inbox/retry');
+    const item = (await call('GET', '/api/inbox')).body.items[0];
+    assert.strictEqual(item.background, true);
+    assert.strictEqual(item.rerouted, true, 'or a rerouted message could bounce between engines again');
+  }));
+
+  await checkAsync('activity: a batch keeps its order and gives every line its own seq', () => withServer(async ({ call }) => {
+    await call('POST', '/api/run/start', { engine: 'claude', thread: 'main', message: 'm' });
+    await call('POST', '/api/run/activity', { engine: 'claude', activities: ['one', 'two', 'three'], draft: 'd' });
+    const t = (await call('GET', '/api/run/transcript?engine=claude&since=0')).body;
+    assert.deepStrictEqual(t.lines.map((l) => l.text), ['one', 'two', 'three']);
+    assert.strictEqual(new Set(t.lines.map((l) => l.seq)).size, 3);
+    assert.strictEqual(t.draft, 'd');
+  }));
+
+  await checkAsync('activity sender: labels are never dropped and posts never overlap', async () => {
+    let inFlight = 0; let maxInFlight = 0; const got = [];
+    const send = watcher.activitySender(async (b) => {
+      inFlight += 1; maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 10));
+      got.push(b); inFlight -= 1;
+    });
+    send({ activity: 'a' }); send({ activity: 'b', draft: 'd1' }); send({ draft: 'd2' }); send({ activity: 'c' });
+    await new Promise((r) => setTimeout(r, 80));
+    assert.strictEqual(maxInFlight, 1);
+    assert.deepStrictEqual(got.flatMap((b) => b.activities), ['a', 'b', 'c']);
+    assert.strictEqual(got[got.length - 1].draft, 'd2', 'the newest draft wins');
+  });
+
+  // One slot: a second question overwrote the first, whose hook then waited out
+  // its whole timeout for an id that could no longer be answered.
+  await checkAsync('ask: two questions at once are both held and answered by id', () => withServer(async ({ call }) => {
+    const a = (await call('POST', '/api/ask', { question: 'A?', command: 'git push', options: ['Approve', 'Deny'], rule: 'git', cwd: '/w' })).body.id;
+    const b = (await call('POST', '/api/ask', { question: 'B?', command: 'rm -rf x', options: ['Approve', 'Deny'] })).body.id;
+    const first = (await call('GET', '/api/state')).body;
+    assert.strictEqual(first.id, a, 'the oldest pending question is shown first');
+    assert.strictEqual(first.pending, 2);
+    assert.strictEqual(first.rule, 'git');
+    assert.ok(first.expiresAt > Date.now());
+    assert.strictEqual((await call('POST', '/api/answer', { id: b, answer: 'Deny' })).status, 200);
+    assert.strictEqual((await call('GET', `/api/state?id=${a}`)).body.status, 'pending', 'answering B must not touch A');
+    assert.strictEqual((await call('GET', `/api/state?id=${b}`)).body.answer, 'Deny');
+    assert.strictEqual((await call('POST', '/api/answer', { id: a, answer: 'Approve' })).status, 200);
+    assert.strictEqual((await call('GET', `/api/state?id=${a}`)).body.answer, 'Approve');
+    assert.strictEqual((await call('GET', '/api/state?id=never-existed')).body.status, 'gone');
+    assert.strictEqual((await call('GET', '/api/health')).body.asks, 0);
+  }));
+
+  await checkAsync('ask: the 21st pending question is refused, never silently dropped', () => withServer(async ({ call }) => {
+    for (let i = 0; i < 20; i++) assert.strictEqual((await call('POST', '/api/ask', { question: `q${i}` })).status, 200);
+    assert.strictEqual((await call('POST', '/api/ask', { question: 'one too many' })).status, 429);
+  }));
+
+  // `speaking = null; if (speaking === btn) return;` - compared after clearing,
+  // so tapping Stop cancelled the speech and started it again.
+  check('page: tapping the button that is reading stops it', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const src = /var speaking = null;\r?\n  function speak\(text, btn, reset\) \{[\s\S]*?\n  \}/.exec(html);
+    assert.ok(src, 'speak not found');
+    const utterances = [];
+    let cancels = 0;
+    function Utter(t) { this.text = t; utterances.push(this); }
+    const synth = { cancel() { cancels += 1; }, speak() {} };
+    // eslint-disable-next-line no-new-func
+    const speak = new Function('window', 'speechSynthesis', 'SpeechSynthesisUtterance', `${src[0]}; return speak;`)({ speechSynthesis: synth }, synth, Utter);
+    const a = { textContent: 'Read' }; const b = { textContent: 'Read' };
+    let resetA = 0; let resetB = 0;
+    speak('one', a, () => { resetA += 1; a.textContent = 'Read'; });
+    assert.strictEqual(a.textContent, 'Stop');
+    speak('one', a, () => { resetA += 1; a.textContent = 'Read'; });
+    assert.strictEqual(utterances.length, 1, 'Stop must not start a second utterance');
+    assert.strictEqual(a.textContent, 'Read');
+    assert.strictEqual(cancels, 1);
+    // A reads, then B takes over; A's late onend must not reset B.
+    speak('one', a, () => { resetA += 1; });
+    speak('two', b, () => { resetB += 1; });
+    utterances[1].onend();
+    assert.strictEqual(b.textContent, 'Stop');
+    assert.strictEqual(resetB, 0);
+  });
+
+  const pageRenderer = () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const grab = (name, args) => {
+      const m = new RegExp(`function ${name}\\(${args}\\) \\{[\\s\\S]*?\\n  \\}`).exec(html);
+      assert.ok(m, `${name} not found`);
+      return m[0];
+    };
+    // eslint-disable-next-line no-new-func
+    return new Function(`${grab('esc', 's')}; ${grab('inline', 'h')}; ${grab('renderRich', 's')}; return renderRich;`)();
+  };
+
+  check('page: a link keeps every query parameter, and loses trailing punctuation', () => {
+    const out = pageRenderer()('see https://example.com/s?q=a&page=2&x=3. Then "https://b.example/y"');
+    assert.ok(out.includes('href="https://example.com/s?q=a&amp;page=2&amp;x=3"'), out);
+    assert.ok(out.includes('</a>. Then'), 'the full stop belongs to the sentence');
+    assert.ok(out.includes('href="https://b.example/y"'));
+  });
+
+  // The reply is written by a model that has been reading whatever it was
+  // pointed at. Nothing it writes may become markup except the fixed set.
+  check('page: markdown renders, and nothing in a reply can inject markup', () => {
+    const r = pageRenderer();
+    const out = r('# Title\n\n- one\n- **two**\n\n```js\nconst a = "<b>";\n```\n\n[docs](https://example.com/d?a=1&b=2) and [bad](javascript:alert(1))\n<img src=x onerror=1>\n\u00000\u0000');
+    assert.ok(out.includes('<div class="md-h">Title</div>'));
+    assert.ok(out.includes('<ul class="md-l"><li>one</li><li><strong>two</strong></li></ul>'));
+    assert.ok(out.includes('<pre class="code"><code>const a = &quot;&lt;b&gt;&quot;;</code></pre>'));
+    assert.ok(out.includes('<a href="https://example.com/d?a=1&amp;b=2"'));
+    assert.ok(!/href="javascript:/i.test(out), 'only http(s) and /artifacts links may become anchors');
+    assert.ok(!/<img/i.test(out), 'raw HTML must stay escaped');
+    assert.ok(!out.includes('\u0000'), 'the placeholder delimiter must never leak');
+    // A URL inside a code span is code, not a link.
+    assert.ok(r('`curl https://x.example`').includes('<code>curl https://x.example</code>'));
+  });
+
+  check('page: the keyboard only promises "send" when Enter sends', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    assert.ok(!/<textarea id="msg"[^>]*enterkeyhint/.test(html), 'the hint must be set from the setting, not hard-coded');
+    assert.ok(/LS\.get\('enterSends', false\) \? 'send' : 'enter'/.test(html));
+    assert.ok(/!e\.isComposing/.test(html), 'an IME commit must not send');
+  });
+
+  check('page: Now shows the selected thread, and a thread change cannot be skipped by the replies cache', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    assert.ok(!/latest-box|id="latest"/.test(html), 'the any-thread "latest reply" box must be gone');
+    assert.ok(/function renderConversation\(\)/.test(html));
+    assert.ok(/'\|' \+ thread\(\) \+ '\|'/.test(html), 'the repliesKey must include the thread');
+    assert.ok((html.match(/renderConversation\(\)/g) || []).length >= 5);
+  });
+
+  check('page: search highlighting never builds markup from the query', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const fn = /function highlight\(root, q\) \{[\s\S]*?\n  \}/.exec(html);
+    assert.ok(fn, 'highlight not found');
+    assert.ok(!/innerHTML/.test(fn[0]), 'highlight must work on text nodes only');
+  });
+
+  check('page: older replies survive a poll, and the approval card shows rule, directory and time left', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    assert.ok(/renderReplies\(withOlder\(r\.items\)\)/.test(html), 'a poll must not drop paged-in replies');
+    assert.ok(/function tickAsk\(\)/.test(html) && /RULE_LABEL\[s\.rule\]/.test(html));
+  });
+
+  await checkAsync('messages: `before` pages backwards through the archive', () => withServer(async ({ call }) => {
+    for (let i = 0; i < 5; i++) { await call('POST', '/api/notify', { message: `m${i}` }); await new Promise((r) => setTimeout(r, 5)); }
+    const all = (await call('GET', '/api/messages?limit=10')).body.items;
+    assert.strictEqual(all.length, 5);
+    const older = (await call('GET', `/api/messages?limit=10&before=${all[2].at}`)).body.items;
+    assert.deepStrictEqual(older.map((n) => n.message), ['m1', 'm0']);
+  }));
+
+  check('page: one main landmark, and the snippet list has a visible way to edit it', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    assert.strictEqual((html.match(/<main[\s>]/g) || []).length, 1);
+    assert.strictEqual((html.match(/role="tabpanel"/g) || []).length, 4);
+    assert.ok(/Remove snippet: /.test(html), 'each snippet needs a labelled, tappable remove');
+    assert.ok(!/oncontextmenu/.test(html), 'long-press was the only way to remove a snippet');
+  });
+
+  check('secrets: the value is masked by default and the page follows the chosen theme', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'secrets.html'), 'utf8');
+    assert.ok(/id="value"[^>]*text-security:disc/.test(html), 'a secret must not be shown in clear while typing');
+    assert.ok(/id="show"/.test(html) && /halyard\.theme/.test(html));
+    assert.ok(/:root\[data-theme="dark"\]/.test(html) && /:root:not\(\[data-theme="light"\]\)/.test(html));
+  });
+
+  check('page: no native dialog remains, and a destructive sheet does not default to its action', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const script = html.slice(html.indexOf('<script>'));
+    for (const fn of ['alert', 'confirm', 'prompt']) {
+      assert.ok(!new RegExp(`(^|[^.\\w])${fn}\\(`).test(script), `a native ${fn}() is still in the page`);
+    }
+    assert.ok(/function toast\(text, opts\)/.test(script) && /function sheet\(opts\)/.test(script));
+    assert.ok(/\(input \|\| \(opts\.danger \? cancel : ok\)\)\.focus\(\)/.test(script), 'a destructive sheet must focus Cancel');
+  });
+
+  check('page: search matches on the prompt as well as the reply', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const src = /function matchesQuery\(n, q\) \{[\s\S]*?\n  \}/.exec(html);
+    assert.ok(src, 'matchesQuery not found');
+    // eslint-disable-next-line no-new-func
+    const m = new Function(`${src[0]}; return matchesQuery;`)();
+    assert.ok(m({ message: 'done', prompt: 'fix the Parser' }, 'parser'));
+    assert.ok(m({ message: 'Parser fixed' }, 'parser'));
+    assert.ok(!m({ message: 'done', prompt: 'other' }, 'parser'));
+    assert.ok(m({ message: 'anything' }, ''));
+  });
+
+  // The keep-alive was a comment frame, which EventSource never surfaces, so the
+  // page could not tell a quiet stream from a dead one.
+  await checkAsync('events: the stream pings with a named event the page can see', () => withServer(async ({ base, token }) => {
+    const text = await new Promise((resolve, reject) => {
+      const req = require('http').get(`${base}/api/events?token=${token}`, (res) => {
+        let buf = '';
+        res.on('data', (c) => { buf += c; });
+        setTimeout(() => { req.destroy(); resolve(buf); }, 300);
+      });
+      req.on('error', (e) => { if (e.code !== 'ECONNRESET') reject(e); });
+    });
+    assert.ok(/event: ping\ndata: 1\n\n/.test(text), `no ping frame in: ${JSON.stringify(text)}`);
+    assert.ok(!/^: ka$/m.test(text), 'a comment frame is invisible to the page');
+  }, { cli: { ssePingMs: 50 } }));
+
+  check('page: a transcript line is appended once, however many fetches are in flight', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    assert.ok(/l\.seq > lastLineSeq/.test(html), 'lines must be de-duplicated by seq');
+    assert.ok(/if \(transcriptBusy\) \{ transcriptAgain = true; return; \}/.test(html), 'only one transcript fetch at a time');
+    assert.ok(/addEventListener\('ping', touch\)/.test(html), 'a ping must count as contact');
+  });
+
+  check('artifacts: the read-aloud bar makes room for itself and hides where speech is missing', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+    assert.ok(/document\.body\.style\.paddingBottom = \(bar\.offsetHeight \+ 8\) \+ 'px'/.test(src));
+    assert.ok(/if \(!window\.speechSynthesis\) \{ bar\.style\.display = 'none'; return; \}/.test(src));
+  });
+
+  // 110 kB of page went out uncompressed, with no validator, on every open.
+  await checkAsync('shell: compressed, and a repeat request is a 304', () => withServer(async ({ base, token }) => {
+    const raw = fs.statSync(path.join(__dirname, '..', 'public', 'index.html')).size;
+    const gz = await rawGet(`${base}/?token=${token}`, { 'accept-encoding': 'gzip' });
+    const br = await rawGet(`${base}/?token=${token}`, { 'accept-encoding': 'br, gzip' });
+    const plain = await rawGet(`${base}/?token=${token}`, { 'accept-encoding': 'identity' });
+    console.log(`    [D1] shell raw=${raw} gzip=${gz.body.length} br=${br.body.length}`);
+    assert.strictEqual(gz.headers['content-encoding'], 'gzip');
+    assert.strictEqual(br.headers['content-encoding'], 'br');
+    assert.strictEqual(plain.headers['content-encoding'], undefined);
+    assert.strictEqual(plain.body.length, raw);
+    // Raised twice by the owner: 40,000/34,000 -> 45,000/38,000 for plan 5, then
+    // 48,000/41,000 for plan 6's page halves (F5-F11, measured 47,220/40,046).
+    // The shell is now an ETag 304 and cached by the worker, so this is the
+    // first-open cost. It guards against unplanned growth; raise it only with
+    // the owner.
+    assert.ok(gz.body.length <= 48000, `gzip shell is ${gz.body.length} bytes`);
+    assert.ok(br.body.length <= 41000, `brotli shell is ${br.body.length} bytes`);
+    assert.strictEqual(require('zlib').gunzipSync(gz.body).length, raw, 'the compressed body must be the same page');
+    const again = await rawGet(`${base}/?token=${token}`, { 'if-none-match': gz.headers.etag });
+    assert.strictEqual(again.status, 304);
+    assert.strictEqual(again.body.length, 0);
+  }));
+
+  await checkAsync('notifications: unchanged is a 304, and a new reply changes the tag', () => withServer(async ({ base, token, call }) => {
+    const first = await rawGet(`${base}/api/notifications?token=${token}`);
+    assert.strictEqual((await rawGet(`${base}/api/notifications?token=${token}`, { 'if-none-match': first.headers.etag })).status, 304);
+    await call('POST', '/api/notify', { message: 'hello' });
+    const after = await rawGet(`${base}/api/notifications?token=${token}`, { 'if-none-match': first.headers.etag });
+    assert.strictEqual(after.status, 200, 'a stale tag must get the new ring');
+    assert.notStrictEqual(after.headers.etag, first.headers.etag);
+  }));
+
+  await checkAsync('json: large bodies are gzipped, small ones are not, and the stream never is', () => withServer(async ({ base, token, call }) => {
+    await call('POST', '/api/notify', { message: 'x'.repeat(5000) });
+    const big = await rawGet(`${base}/api/notifications?token=${token}`, { 'accept-encoding': 'gzip' });
+    assert.strictEqual(big.headers['content-encoding'], 'gzip');
+    assert.ok(JSON.parse(require('zlib').gunzipSync(big.body)).items.length === 1);
+    const small = await rawGet(`${base}/api/state?token=${token}`, { 'accept-encoding': 'gzip' });
+    assert.strictEqual(small.headers['content-encoding'], undefined);
+  }));
+
+  // Every tool call bumped `health`, so every open page refetched the whole
+  // bridge status and THEN the transcript.
+  await checkAsync('stream: activity moves the run counter and leaves health alone', () => withServer(async ({ call, app }) => {
+    await call('POST', '/api/run/start', { engine: 'claude', thread: 'main', message: 'm' });
+    const before = { ...app.versions };
+    await call('POST', '/api/run/activity', { engine: 'claude', activities: ['Read a.js'] });
+    assert.strictEqual(app.versions.health, before.health, 'health must not move on a tool call');
+    assert.strictEqual(app.versions.run, before.run + 1);
+    const t = (await call('GET', '/api/run/transcript?engine=claude&since=0')).body;
+    assert.strictEqual(t.activity, 'Read a.js', 'the transcript response carries the activity line');
+    await call('POST', '/api/run/activity', { engine: 'claude', activities: ['x'], modelLabel: 'opus (auto)' });
+    assert.strictEqual(app.versions.health, before.health + 1, 'a model change is on the run card, so health moves');
+  }));
+
+  await checkAsync('stream: queueing a message does not wake the reply list', () => withServer(async ({ call, app }) => {
+    const before = { ...app.versions };
+    await call('POST', '/api/inbox', { message: 'hi' });
+    assert.strictEqual(app.versions.notifications, before.notifications);
+    assert.strictEqual(app.versions.state, before.state + 1);
+    await call('POST', '/api/notify', { message: 'a reply' });
+    assert.strictEqual(app.versions.notifications, before.notifications + 1);
+    const id = (await call('GET', '/api/notifications')).body.items[0].id;
+    await call('DELETE', `/api/notifications?id=${id}`);
+    assert.strictEqual(app.versions.notifications, before.notifications + 2, 'a delete changes the ring, so the ETag must move');
+  }));
+
+  await checkAsync('run: an idle end does not wake anyone, and the kill check is its own small route', () => withServer(async ({ call, app }) => {
+    const before = app.versions.health;
+    await call('POST', '/api/run/end', {});
+    assert.strictEqual(app.versions.health, before, 'nothing was running, so nothing changed');
+    assert.deepStrictEqual((await call('GET', '/api/run/kill')).body, { killRequested: false });
+    await call('POST', '/api/run/start', { engine: 'claude', thread: 'main', message: 'm' });
+    await call('POST', '/api/run/kill');
+    assert.deepStrictEqual((await call('GET', '/api/run/kill')).body, { killRequested: true });
+  }));
+
+  // The hook polled every 3 s, so an Approve took up to 3 s to register.
+  await checkAsync('ask: a waiting poll returns as soon as the question is answered', () => withServer(async ({ call }) => {
+    const { id } = (await call('POST', '/api/ask', { question: 'q', command: 'git push' })).body;
+    const started = Date.now();
+    const waiting = call('GET', `/api/state?id=${id}&wait=10`);
+    await new Promise((r) => setTimeout(r, 150));
+    await call('POST', '/api/answer', { id, answer: 'Approve' });
+    const got = await waiting;
+    assert.strictEqual(got.body.answer, 'Approve');
+    const took = Date.now() - started;
+    console.log(`    [D4] answer seen ${took} ms after the ask (150 ms of that was the test's own delay)`);
+    assert.ok(took < 1000, `took ${took} ms`);
+    // And it does not hang past its own limit when nobody answers.
+    const { id: id2 } = (await call('POST', '/api/ask', { question: 'q2' })).body;
+    const t0 = Date.now();
+    assert.strictEqual((await call('GET', `/api/state?id=${id2}&wait=1`)).body.status, 'pending');
+    assert.ok(Date.now() - t0 >= 900 && Date.now() - t0 < 3000);
+  }));
+
+  check('page: every resource a hidden tab releases is restored when it returns', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const h = /document\.addEventListener\('visibilitychange', function \(\) \{[\s\S]*?\n  \}\);/.exec(html);
+    assert.ok(h, 'visibilitychange handler not found');
+    for (const need of ['stopTimers()', 'es.close()', 'clearTimeout(reconnectTimer)', 'retime()', 'connectStream()', 'pollHealth()', 'flushOutbox()', 'syncWakeLock()']) {
+      assert.ok(h[0].includes(need), `the handler must call ${need}`);
+    }
+    assert.ok(/if \(!window\.EventSource \|\| document\.hidden\) return;/.test(html), 'a hidden page must not reconnect the stream');
+  });
+
+  await checkAsync('upload: streamed to disk, refused past the limit, and never left half-written', () => withServer(async ({ base, token, paths }) => {
+    const ok = await fetch(`${base}/api/upload?token=${token}&name=a.bin`, { method: 'POST', body: Buffer.alloc(900, 1) });
+    assert.strictEqual(ok.status, 200);
+    const j = await ok.json();
+    assert.strictEqual(j.bytes, 900);
+    assert.strictEqual(fs.statSync(j.path).size, 900);
+    const big = await fetch(`${base}/api/upload?token=${token}&name=b.bin`, { method: 'POST', body: Buffer.alloc(5000, 1) }).catch(() => ({ status: 413 }));
+    assert.strictEqual(big.status, 413);
+    assert.deepStrictEqual(fs.readdirSync(paths.uploads).filter((n) => n.endsWith('.part')), [], 'no partial file may be left behind');
+    assert.strictEqual(fs.readdirSync(paths.uploads).filter((n) => n.includes('b.bin')).length, 0);
+  }, { cli: { maxUploadBytes: 1000 } }));
+
+  await checkAsync('static: a byte range is served as 206, and an impossible one as 416', () => withServer(async ({ base, token, paths }) => {
+    fs.writeFileSync(path.join(paths.artifacts, 'clip.bin'), Buffer.from('0123456789'));
+    const u = `${base}/artifacts/clip.bin?token=${token}`;
+    const part = await rawGet(u, { range: 'bytes=2-5' });
+    assert.strictEqual(part.status, 206);
+    assert.strictEqual(part.body.toString(), '2345');
+    assert.strictEqual(part.headers['content-range'], 'bytes 2-5/10');
+    assert.strictEqual((await rawGet(u, { range: 'bytes=-3' })).body.toString(), '789');
+    assert.strictEqual((await rawGet(u, { range: 'bytes=7-' })).body.toString(), '789');
+    assert.strictEqual((await rawGet(u, { range: 'bytes=50-60' })).status, 416);
+    assert.strictEqual((await rawGet(u)).body.toString(), '0123456789');
+  }));
+
+  check('engines: the plain parser builds the reply without re-joining it', () => {
+    const r = engines.newResult();
+    const parse = engines.parserFor('text');
+    for (const l of ['a', 'b', 'c']) parse(l, r);
+    assert.strictEqual(r.reply, 'a\nb\nc');
+    assert.ok(!/replyLines\.join/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'engines', 'index.js'), 'utf8')));
+  });
+
+  await checkAsync('inbox: an attachment flag survives to the queue, where the router reads it', () => withServer(async ({ call }) => {
+    await call('POST', '/api/inbox', { message: 'see file', attachment: true });
+    await call('POST', '/api/inbox', { message: 'no file', attachment: 'yes' });
+    const items = (await call('GET', '/api/inbox')).body.items;
+    assert.strictEqual(items[0].attachment, true);
+    assert.strictEqual(items[1].attachment, false, 'only a real boolean true counts');
+  }));
+
+  await checkAsync('spend: today is a local-day total, and the model rollup is there to draw', () => withServer(async ({ call }) => {
+    await call('POST', '/api/notify', { message: 'a', model: 'opus', costUsd: 0.5, durationMs: 1 });
+    await call('POST', '/api/notify', { message: 'b', model: 'sonnet', costUsd: 0.25, durationMs: 1 });
+    const s = (await call('GET', '/api/spend?days=30')).body;
+    assert.strictEqual(s.todayUsd, 0.75);
+    assert.deepStrictEqual(s.byModel.map((m) => m.key), ['opus', 'sonnet']);
+  }));
+
+  await checkAsync('prefs: merged by key, clamped, and a bad value is refused not stored', () => withServer(async ({ call, paths }) => {
+    assert.deepStrictEqual((await call('GET', '/api/prefs')).body, {});
+    await call('POST', '/api/prefs', { snippets: ['a', '', 'b'.repeat(500)] });
+    await call('POST', '/api/prefs', { pins: [{ id: 'p1', at: 1, thread: '../x', message: 'm' }] });
+    const p = (await call('GET', '/api/prefs')).body;
+    assert.deepStrictEqual(p.snippets, ['a', 'b'.repeat(120)]);
+    assert.strictEqual(p.pins[0].thread, 'x', 'a thread name is slugged like every other');
+    assert.strictEqual((await call('POST', '/api/prefs', { quietHours: { from: '25:00', to: '07:00' } })).status, 400);
+    assert.strictEqual((await call('POST', '/api/prefs', { unknownKey: 1 })).status, 200);
+    assert.ok(!('unknownKey' in JSON.parse(fs.readFileSync(paths.prefs, 'utf8'))), 'only allow-listed keys are stored');
+  }));
+
+  check('diff: the page escapes everything git said', () => {
+    const html = watcher.diffHtml({ runId: 'r1', thread: 'main', stat: ' a.js | 2 +-', patch: '+const x = "<script>alert(1)</script>";', untracked: ['<b>.txt'] });
+    assert.ok(!/<script>alert/.test(html) && !/<b>\.txt/.test(html), 'source text must never become markup');
+    assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+  });
+
+  await checkAsync('diff: no repository means no diff and no error', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-nodiff-'));
+    assert.strictEqual(await watcher.gitOut(['rev-parse', 'HEAD'], dir, { timeoutMs: 5000 }), null);
+    const cfg = configmod.load({ file: null, env: {}, cli: { workspace: dir } });
+    assert.strictEqual(await watcher.writeDiff({ cfg, paths: { artifacts: dir }, runId: 'r', thread: 'main', headBefore: null, workspace: dir }), null);
+  });
+
+  // The one token that is not the owner's. It must reach exactly one route.
+  await checkAsync('inbound: a scoped token can queue a message and do nothing else', () => withServer(async ({ base, call, paths }) => {
+    fs.mkdirSync(paths.inbound, { recursive: true });
+    const t = 'inbound-' + crypto.randomBytes(18).toString('hex');
+    fs.writeFileSync(path.join(paths.inbound, 'ci.token'), t);
+    const h = { authorization: `Bearer ${t}`, 'content-type': 'application/json' };
+    const ok = await fetch(`${base}/api/inbox`, { method: 'POST', headers: h, body: JSON.stringify({ message: 'build failed', thread: 'main', front: true, engine: 'plain', background: false }) });
+    assert.strictEqual(ok.status, 200);
+    const item = (await call('GET', '/api/inbox')).body.items[0];
+    assert.strictEqual(item.thread, 'ci', 'the thread is the token name, whatever the body said');
+    assert.strictEqual(item.background, true);
+    assert.strictEqual(item.engine, 'claude');
+    assert.ok(/^\[inbound:ci\]/.test(item.message) && item.message.includes('build failed'));
+    for (const [method, p] of [['GET', '/api/inbox'], ['GET', '/api/health'], ['POST', '/api/notify'], ['POST', '/api/answer'], ['GET', '/'], ['GET', '/api/secrets'], ['POST', '/api/inbox/pop'], ['DELETE', '/api/inbox?id=x']]) {
+      const r = await fetch(`${base}${p}`, { method, headers: h, body: method === 'POST' ? '{}' : undefined });
+      assert.strictEqual(r.status, 401, `${method} ${p} must be closed to an inbound token`);
+    }
+    // A token file whose name is not a thread slug, or whose token is short, is ignored.
+    fs.writeFileSync(path.join(paths.inbound, 'Bad Name.token'), t + 'x');
+    fs.writeFileSync(path.join(paths.inbound, 'short.token'), 'abc');
+    assert.strictEqual((await fetch(`${base}/api/inbox`, { method: 'POST', headers: { authorization: 'Bearer abc', 'content-type': 'application/json' }, body: '{"message":"x"}' })).status, 401);
+  }));
+
+  await checkAsync('watchdog: a message nobody is running raises one notice, and a run in flight raises none', () => withServer(async ({ call, app }) => {
+    await call('POST', '/api/inbox', { message: 'stuck' });
+    const later = Date.now() + 11 * 60 * 1000;
+    assert.strictEqual(app.watchdogTick(Date.now()), null, 'not stale yet');
+    const id = app.watchdogTick(later);
+    assert.ok(id, 'a stale due message must be reported');
+    assert.strictEqual(app.watchdogTick(later + 60000), null, 'only once per message');
+    const notes = (await call('GET', '/api/notifications')).body.items;
+    assert.strictEqual(notes.filter((n) => /waited 10 minutes/.test(n.message)).length, 1);
+    await call('POST', '/api/inbox', { message: 'second' });
+    await call('POST', '/api/inbox/pop');
+    await call('POST', '/api/run/start', { engine: 'claude', thread: 'main', message: 'm' });
+    assert.strictEqual(app.watchdogTick(later + 3600000), null, 'a run in flight is a legitimate wait');
+  }));
+
+  check('workspace: a mapped thread runs in its own directory, and a hostile name gets the default', () => {
+    const cfg = configmod.load({ file: null, env: {}, cli: { workspace: '/default', threadWorkspaces: { homelab: '/srv/lab', bad: 42 } } });
+    assert.strictEqual(configmod.workspaceFor(cfg, 'homelab'), path.resolve('/srv/lab'));
+    assert.strictEqual(configmod.workspaceFor(cfg, 'main'), cfg.workspace);
+    assert.strictEqual(configmod.workspaceFor(cfg, 'bad'), cfg.workspace);
+    // `constructor` exists on every plain object.
+    assert.strictEqual(configmod.workspaceFor(cfg, 'constructor'), cfg.workspace);
+    const prompt = watcher.buildPrompt({ item: { message: 'hi' }, thread: { name: 'homelab' }, engine: cfg.engines.claude, cfg, secretsDir: '/s', workspace: '/srv/lab' });
+    assert.ok(prompt.includes('Working directory: /srv/lab'));
+  });
+
+  await checkAsync('spend guard: at the cap the message stays queued, below it or unreadable it runs', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-spend-'));
+    const posts = [];
+    const mk = (todayUsd) => ({
+      cfg: { spendGuard: { dailyUsd: 2, announceEveryMs: 1 } },
+      paths: { root: dir },
+      log: { info() {} },
+      client: {
+        tryPost: async (p, b) => { posts.push([p, b]); return p === '/api/inbox/peek' ? { item: { id: 'i1', thread: 'main', engine: 'claude' } } : {}; },
+        tryGet: async () => (todayUsd === null ? null : { todayUsd }),
+      },
+    });
+    assert.strictEqual(await watcher.spendHeld(mk(1.99)), false);
+    assert.strictEqual(await watcher.spendHeld(mk(null)), false, 'unreadable spend fails open');
+    assert.strictEqual(await watcher.spendHeld(mk(2)), true);
+    assert.ok(posts.some(([p, b]) => p === '/api/inbox/hold' && b.gauge === 'daily spend' && b.percent === 100));
+    assert.ok(posts.some(([p]) => p === '/api/notify'), 'the phone is told why nothing is running');
+    assert.strictEqual(await watcher.spendHeld({ ...mk(50), cfg: { spendGuard: { dailyUsd: 0 } } }), false, '0 disables it');
+  });
+
+  // Every reply buzzed every device, at any hour. Muting must never reach an
+  // approval: the hook denies on a timeout, so a silenced ask is a lost command.
+  const quietKeys = push.generateVapidKeys();
+  await checkAsync('quiet: a muted thread and quiet hours skip the push, and an approval never does', () => withServer(async ({ call, app }) => {
+    assert.strictEqual(app.inQuietHours({ from: '22:00', to: '07:00' }, new Date(2026, 0, 1, 23, 0)), true);
+    assert.strictEqual(app.inQuietHours({ from: '22:00', to: '07:00' }, new Date(2026, 0, 1, 6, 59)), true);
+    assert.strictEqual(app.inQuietHours({ from: '22:00', to: '07:00' }, new Date(2026, 0, 1, 7, 0)), false);
+    assert.strictEqual(app.inQuietHours({ from: '09:00', to: '17:00' }, new Date(2026, 0, 1, 12, 0)), true);
+    assert.strictEqual(app.inQuietHours({ from: '09:00', to: '09:00' }, new Date(2026, 0, 1, 9, 0)), false);
+    assert.strictEqual(app.inQuietHours(null), false);
+
+    const sent = [];
+    const orig = push.sendNotification;
+    push.sendNotification = async (sub, payload) => { sent.push(JSON.parse(payload)); return { ok: true, status: 201, gone: false }; };
+    try {
+      await call('POST', '/api/prefs', { mutedThreads: ['chores'] });
+      await call('POST', '/api/notify', { message: 'muted', thread: 'chores' });
+      await call('POST', '/api/notify', { message: 'heard', thread: 'work' });
+      await call('POST', '/api/ask', { question: 'Approve?', command: 'git push' });
+      await new Promise((r) => setTimeout(r, 80));
+    } finally { push.sendNotification = orig; }
+    // Sorted: deliveries are not awaited, so their order is not part of the contract.
+    assert.deepStrictEqual(sent.map((s) => s.kind).sort(), ['ask', 'reply']);
+    assert.strictEqual((await call('GET', '/api/notifications')).body.items.length, 2, 'a muted reply is still stored and shown');
+  }, { ctx: { pushKeys: () => quietKeys, pushSubs: () => [{ endpoint: 'https://push.example/q', keys: { p256dh: 'a', auth: 'b' } }] } }));
+
+  // A run making ten pushes asked ten times. The widening must stay inside one
+  // rule family and one run, and never apply to a rule the config does not list.
+  await checkAsync('relay scope: approved for the run, not beyond it, and never for an unlisted rule', () => withServer(async ({ call }) => {
+    await call('POST', '/api/run/start', { runId: 'r1', engine: 'claude', thread: 'main', message: 'm' });
+    const a = (await call('POST', '/api/ask', { question: 'q', command: 'git push', rule: 'git' })).body.id;
+    await call('POST', '/api/answer', { id: a, answer: 'Approve', scope: 'run' });
+    const b = (await call('POST', '/api/ask', { question: 'q', command: 'git push origin x', rule: 'git' })).body.id;
+    assert.strictEqual((await call('GET', `/api/state?id=${b}`)).body.answer, 'Approve', 'the second git command is answered without a tap');
+    const steps = (await call('GET', '/api/run/transcript?engine=claude&since=0')).body.lines.map((l) => l.text);
+    assert.ok(steps.some((t) => /^auto-approved \(git\)/.test(t)), 'an auto-approval must be visible in the steps');
+    // A different rule still asks.
+    const c = (await call('POST', '/api/ask', { question: 'q', command: 'rm -rf x', rule: 'destructive-fs' })).body.id;
+    assert.strictEqual((await call('GET', `/api/state?id=${c}`)).body.status, 'pending');
+    // A rule that is not scopable cannot be widened even if the phone asks.
+    await call('POST', '/api/answer', { id: c, answer: 'Approve', scope: 'run' });
+    const d = (await call('POST', '/api/ask', { question: 'q', command: 'rm -rf y', rule: 'destructive-fs' })).body.id;
+    assert.strictEqual((await call('GET', `/api/state?id=${d}`)).body.status, 'pending');
+    // The scope dies with the run.
+    await call('POST', '/api/run/end', {});
+    await call('POST', '/api/run/start', { runId: 'r2', engine: 'claude', thread: 'main', message: 'm' });
+    const e = (await call('POST', '/api/ask', { question: 'q', command: 'git push', rule: 'git' })).body.id;
+    assert.strictEqual((await call('GET', `/api/state?id=${e}`)).body.status, 'pending', 'a new run starts with nothing approved');
+  }));
+
+  // The step list lived in memory and the next run wiped it, so "what did it
+  // actually do last night" had no answer. The id becomes a filename.
+  await checkAsync('run history: steps are stored when a run ends, read by id, and the id cannot be a path', () => withServer(async ({ call }) => {
+    await call('POST', '/api/run/start', { runId: 'run-abc', engine: 'claude', thread: 'main', message: 'm' });
+    await call('POST', '/api/run/activity', { engine: 'claude', activities: ['Read a.js', 'Edit a.js'] });
+    await call('POST', '/api/run/end', {});
+    const h = (await call('GET', '/api/run/history?id=run-abc')).body;
+    assert.deepStrictEqual(h.lines.map((l) => l.text), ['Read a.js', 'Edit a.js']);
+    assert.strictEqual((await call('GET', '/api/run/history?id=..%2F..%2Ftoken')).status, 400);
+    assert.strictEqual((await call('GET', '/api/run/history?id=never')).status, 404);
+    assert.strictEqual((await call('POST', '/api/notify', { message: 'r', runId: '../x' })).status, 200);
+    assert.strictEqual((await call('GET', '/api/notifications')).body.items[0].runId, null, 'a run id that is not allow-listed is dropped');
+  }));
+
+  // Repeats were three fixed patterns, and a scheduled item could only be
+  // cancelled - not paused, and not run early without moving its time of day.
+  check('repeats: chosen days land on the next chosen day at the same time', () => {
+    const { isRepeat } = require('../src/server');
+    assert.ok(isRepeat('days:1,3,5') && isRepeat('daily') && !isRepeat('days:7') && !isRepeat('days:') && !isRepeat('hourly'));
+    const fri = new Date(2026, 0, 2, 8, 30).getTime();            // a Friday
+    const next = new Date(nextOccurrence(fri, 'days:1,3', fri));
+    assert.strictEqual(next.getDay(), 1, 'Friday -> Monday');
+    assert.strictEqual(next.getHours(), 8);
+    assert.strictEqual(next.getMinutes(), 30);
+    // Asleep for a fortnight: one catch-up slot, not fourteen.
+    const later = fri + 14 * 86400000;
+    assert.ok(nextOccurrence(fri, 'days:1,3', later) > later);
+  });
+
+  await checkAsync('scheduled: pause holds it, run-now copies it, and the schedule keeps its time of day', () => withServer(async ({ call }) => {
+    const when = Date.now() + 3600 * 1000;
+    const id = (await call('POST', '/api/inbox', { message: 'standing job', runAfter: when, repeat: 'daily' })).body.id;
+    assert.strictEqual((await call('POST', '/api/inbox/scheduled/pause', { id, paused: true })).status, 200);
+    assert.strictEqual((await call('POST', '/api/inbox/pop')).body.item, null, 'a paused item is never popped');
+    assert.strictEqual((await call('POST', '/api/inbox/scheduled/run-now', { id })).status, 200);
+    const popped = (await call('POST', '/api/inbox/pop')).body.item;
+    assert.strictEqual(popped.message, 'standing job');
+    assert.strictEqual(popped.repeat, null, 'run-now is a one-off');
+    const left = (await call('GET', '/api/inbox/scheduled')).body.items;
+    assert.strictEqual(left.length, 1);
+    assert.strictEqual(left[0].runAfter, when, 'the standing job keeps its own time');
+  }));
+
+  // The page halves of F5-F11 have no browser test. These pin the parts a
+  // careless edit would break silently: the scoped Approve offered on the
+  // strip, its answer word, stored steps built as markup, and an inherited
+  // property read as a thread's workspace.
+  check('page: run-scoped approval, steps, schedule words and the thread workspace line', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const fill = /function fillAskOpts\(s, host, compact\) \{[\s\S]*?\n  \}/.exec(html)[0];
+    assert.ok(/if \(!compact && health && health\.activeRun && s\.rule/.test(fill), 'the scoped approval is full-card only');
+    assert.ok(/answer: 'Approve', scope: 'run'/.test(fill), 'the hook allows on the exact word Approve; scope rides separately');
+    const reply = /function replyEl\(n, opts\) \{[\s\S]*?\n  \}/.exec(html)[0];
+    assert.ok(/act\('Steps'/.test(reply) && /row\.textContent = l\.text/.test(reply), 'stored steps are text, never markup');
+    const words = /var DAY_NAMES = [^\n]+\n  function repeatWords\(r\) \{[\s\S]*?\n  \}/.exec(html)[0];
+    const repeatWords = new Function(`${words}; return repeatWords;`)();
+    assert.strictEqual(repeatWords('days:1,3'), 'Mon, Wed');
+    assert.strictEqual(repeatWords('daily'), 'every day');
+    assert.strictEqual(repeatWords('weekdays'), 'weekdays');
+    const ws = /function syncThreadWs\(\) \{[\s\S]*?\n  \}/.exec(html)[0];
+    const sync = (health, cur) => {
+      const el = { textContent: null };
+      new Function('health', 'thread', '$', `${ws}; syncThreadWs();`)(health, () => cur, () => el);
+      return el.textContent;
+    };
+    const h = { workspace: '/default', threadWorkspaces: { homelab: '/srv/lab' } };
+    assert.strictEqual(sync(h, 'homelab'), 'runs in /srv/lab');
+    assert.strictEqual(sync(h, 'constructor'), 'runs in /default', 'an inherited name is not a mapping');
+    assert.strictEqual(sync(null, 'main'), '', 'nothing to say before health arrives');
+  });
+
+  // A manifest is fetched without cookies unless the link says otherwise, so it
+  // got a 401 and install and the share target never loaded. Found in a
+  // headless Edge pass; no browser test exists, so pin both halves here.
+  await checkAsync('manifest: the link sends the cookie, and the cookie alone is enough', () => withServer(async ({ base, token }) => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    assert.ok(/<link rel="manifest" href="\/manifest\.json" crossorigin="use-credentials">/.test(html));
+    const shell = await rawGet(`${base}/?token=${token}`);
+    const cookie = String(shell.headers['set-cookie']).split(';')[0];
+    assert.ok(/^halyard_token=/.test(cookie), 'the shell must set the cookie the manifest relies on');
+    const m = await rawGet(`${base}/manifest.json`, { cookie });
+    assert.strictEqual(m.status, 200);
+    assert.ok(JSON.parse(m.body.toString('utf8')).share_target, 'the share target must be in what loads');
+  }));
+
+  check('config: a run-scoped rule written as a string is one rule, and a risky one is flagged', () => {
+    const cfg = configmod.load({ file: null, env: {}, cli: { relay: { runScopedRules: 'destructive-fs' } } });
+    assert.deepStrictEqual(cfg.relay.runScopedRules, ['destructive-fs']);
+    assert.ok(configmod.audit(cfg).some((w) => /runScopedRules includes destructive-fs/.test(w.msg)));
+    assert.ok(!configmod.audit(configmod.load({ file: null, env: {}, cli: {} })).some((w) => /runScopedRules/.test(w.msg)), 'the default, git, is not flagged');
   });
 
   // -------------------------------------------------------------------------
