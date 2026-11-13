@@ -482,7 +482,6 @@ check('sw.js: nothing token-gated may be precached, and install cannot fail', ()
   const required = /REQUIRED_SW_VERSION = (\d+)/.exec(page);
   assert.ok(required && Number(required[1]) === Number(/SW_VERSION = (\d+)/.exec(sw)[1]), 'SW_VERSION and the page REQUIRED_SW_VERSION must be bumped together');
   assert.ok(/payload\.review/.test(sw), 'a truncated command must not be answerable from the notification');
-  // The shell is token-gated, so it may only ever be cached at runtime.
   assert.ok(!/SHELL_URLS\s*=\s*\[[^\]]*['"]\/['"]/.test(sw), 'the shell must not be precached');
   assert.ok(/mode === 'navigate'/.test(sw) && /PAGE_KEY/.test(sw), 'the shell is cached from a real navigation');
   assert.ok(/if \(res\.ok\) cache\.put\(PAGE_KEY/.test(sw), 'a 401 page must never replace the cached shell');
@@ -530,8 +529,6 @@ check('the agent is told where secrets live, and given the directory', () => {
 // ---------------------------------------------------------------------------
 // The live server
 
-// A raw GET. fetch() follows redirects, transparently decompresses and may
-// refuse to send sec-fetch-* headers, all of which hide what a check needs.
 function rawGet(url, headers = {}) {
   return new Promise((resolve, reject) => {
     require('http').get(url, { headers }, (res) => {
@@ -584,9 +581,6 @@ async function withServer(fn, opts = {}) {
 }
 
 async function main() {
-  // An artifact is agent-written HTML on the API's own origin. Unsandboxed, its
-  // script could POST /api/answer with the session cookie and approve its own
-  // relay question.
   await checkAsync('artifacts: scriptable types are sandboxed, and a navigation loses its token', () => withServer(async ({ base, token, paths }) => {
     fs.writeFileSync(path.join(paths.artifacts, 'r.html'), '<html><body><script>1</script></body></html>');
     fs.writeFileSync(path.join(paths.artifacts, 'd.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
@@ -605,12 +599,9 @@ async function main() {
     assert.ok(/halyard_token=/.test(String(nav.headers['set-cookie'])), 'the redirect must carry the cookie it relies on');
   }));
 
-  // The options were passed to deliver() and dropped before the payload was
-  // built, so no relay notification ever showed Approve / Deny.
   const askKeys = push.generateVapidKeys();
   await checkAsync('ask: the push payload carries the options, and a long command asks for review', () => withServer(async ({ call }) => {
     const sent = [];
-    // deliver() is reached through push.sendNotification; capture the payload.
     const orig = push.sendNotification;
     push.sendNotification = async (sub, payload) => { sent.push(JSON.parse(payload)); return { ok: true, status: 201, gone: false }; };
     try {
@@ -632,7 +623,6 @@ async function main() {
       const m = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/.exec(r.body.toString('utf8'));
       const want = crypto.createHash('sha256').update(m[1], 'utf8').digest('base64');
       assert.ok(r.headers['content-security-policy-report-only'].includes(`'sha256-${want}'`), `${p}: the policy must hash the script it serves`);
-      // Enforcing is the owner's call after checking a browser console.
       assert.strictEqual(r.headers['content-security-policy'], undefined);
     }
   }));
@@ -652,8 +642,6 @@ async function main() {
   check('index.html: fetches authenticate with a header, not the URL', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
     const sites = html.split('\n').filter((l) => /token=/.test(l) && !/^\s*\/\//.test(l));
-    // Exactly three remain: the EventSource fallback, the share pick-up's
-    // replaceState, and the regex in shareableText that STRIPS tokens.
     assert.strictEqual(sites.length, 3, sites.join('\n'));
   });
 
@@ -727,7 +715,6 @@ async function main() {
     assert.deepStrictEqual((await call('GET', '/api/inbox')).body.items.map((i) => i.id), [b, a]);
     assert.strictEqual((await call('DELETE', `/api/inbox?id=${a}`)).status, 200);
     assert.strictEqual((await call('POST', '/api/inbox/pop')).body.item.id, b);
-    // Already popped: the phone must be told, not answered with a 200.
     assert.strictEqual((await call('DELETE', `/api/inbox?id=${b}`)).status, 404);
     assert.strictEqual((await call('POST', '/api/inbox/front', { id: b })).status, 404);
   }));
@@ -1731,8 +1718,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.deepStrictEqual(fs.readdirSync(dir), ['state.json']);
   });
 
-  // state.json was written in place: a crash mid-write left truncated JSON and
-  // the next start silently began with an empty queue.
   await checkAsync('state: a truncated state.json falls back to the last good copy', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-state-'));
     const paths = pathsmod.ensure(pathsmod.layout(dir));
@@ -1750,7 +1735,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     await second.close();
   });
 
-  // The archive used to drop its oldest half at archiveMaxBytes, silently.
   check('archive: passing the size limit rotates the file, and nothing is lost', () => {
     const archive = require('../src/archive');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-arch-'));
@@ -1765,7 +1749,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.ok(!archive.readAll(f, { maxFiles: 100 }).items.some((n) => n.id === 'r0'));
   });
 
-  // An unhandled 'error' on the read stream used to be an uncaught exception.
   await checkAsync('static: a read error mid-send does not take the server down', () => withServer(async ({ base, token, paths, call }) => {
     fs.writeFileSync(path.join(paths.artifacts, 'gone.txt'), 'x'.repeat(10));
     const orig = fs.createReadStream;
@@ -1807,8 +1790,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(got[got.length - 1].draft, 'd2', 'the newest draft wins');
   });
 
-  // One slot: a second question overwrote the first, whose hook then waited out
-  // its whole timeout for an id that could no longer be answered.
   await checkAsync('ask: two questions at once are both held and answered by id', () => withServer(async ({ call }) => {
     const a = (await call('POST', '/api/ask', { question: 'A?', command: 'git push', options: ['Approve', 'Deny'], rule: 'git', cwd: '/w' })).body.id;
     const b = (await call('POST', '/api/ask', { question: 'B?', command: 'rm -rf x', options: ['Approve', 'Deny'] })).body.id;
@@ -1831,8 +1812,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual((await call('POST', '/api/ask', { question: 'one too many' })).status, 429);
   }));
 
-  // `speaking = null; if (speaking === btn) return;` - compared after clearing,
-  // so tapping Stop cancelled the speech and started it again.
   check('page: tapping the button that is reading stops it', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
     const src = /var speaking = null;\r?\n  function speak\(text, btn, reset\) \{[\s\S]*?\n  \}/.exec(html);
@@ -1841,7 +1820,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     let cancels = 0;
     function Utter(t) { this.text = t; utterances.push(this); }
     const synth = { cancel() { cancels += 1; }, speak() {} };
-    // eslint-disable-next-line no-new-func
     const speak = new Function('window', 'speechSynthesis', 'SpeechSynthesisUtterance', `${src[0]}; return speak;`)({ speechSynthesis: synth }, synth, Utter);
     const a = { textContent: 'Read' }; const b = { textContent: 'Read' };
     let resetA = 0; let resetB = 0;
@@ -1851,7 +1829,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(utterances.length, 1, 'Stop must not start a second utterance');
     assert.strictEqual(a.textContent, 'Read');
     assert.strictEqual(cancels, 1);
-    // A reads, then B takes over; A's late onend must not reset B.
     speak('one', a, () => { resetA += 1; });
     speak('two', b, () => { resetB += 1; });
     utterances[1].onend();
@@ -1866,7 +1843,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
       assert.ok(m, `${name} not found`);
       return m[0];
     };
-    // eslint-disable-next-line no-new-func
     return new Function(`${grab('esc', 's')}; ${grab('inline', 'h')}; ${grab('renderRich', 's')}; return renderRich;`)();
   };
 
@@ -1877,8 +1853,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.ok(out.includes('href="https://b.example/y"'));
   });
 
-  // The reply is written by a model that has been reading whatever it was
-  // pointed at. Nothing it writes may become markup except the fixed set.
   check('page: markdown renders, and nothing in a reply can inject markup', () => {
     const r = pageRenderer();
     const out = r('# Title\n\n- one\n- **two**\n\n```js\nconst a = "<b>";\n```\n\n[docs](https://example.com/d?a=1&b=2) and [bad](javascript:alert(1))\n<img src=x onerror=1>\n\u00000\u0000');
@@ -1889,7 +1863,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.ok(!/href="javascript:/i.test(out), 'only http(s) and /artifacts links may become anchors');
     assert.ok(!/<img/i.test(out), 'raw HTML must stay escaped');
     assert.ok(!out.includes('\u0000'), 'the placeholder delimiter must never leak');
-    // A URL inside a code span is code, not a link.
     assert.ok(r('`curl https://x.example`').includes('<code>curl https://x.example</code>'));
   });
 
@@ -1958,7 +1931,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
     const src = /function matchesQuery\(n, q\) \{[\s\S]*?\n  \}/.exec(html);
     assert.ok(src, 'matchesQuery not found');
-    // eslint-disable-next-line no-new-func
     const m = new Function(`${src[0]}; return matchesQuery;`)();
     assert.ok(m({ message: 'done', prompt: 'fix the Parser' }, 'parser'));
     assert.ok(m({ message: 'Parser fixed' }, 'parser'));
@@ -1966,8 +1938,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.ok(m({ message: 'anything' }, ''));
   });
 
-  // The keep-alive was a comment frame, which EventSource never surfaces, so the
-  // page could not tell a quiet stream from a dead one.
   await checkAsync('events: the stream pings with a named event the page can see', () => withServer(async ({ base, token }) => {
     const text = await new Promise((resolve, reject) => {
       const req = require('http').get(`${base}/api/events?token=${token}`, (res) => {
@@ -1994,7 +1964,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.ok(/if \(!window\.speechSynthesis\) \{ bar\.style\.display = 'none'; return; \}/.test(src));
   });
 
-  // 110 kB of page went out uncompressed, with no validator, on every open.
   await checkAsync('shell: compressed, and a repeat request is a 304', () => withServer(async ({ base, token }) => {
     const raw = fs.statSync(path.join(__dirname, '..', 'public', 'index.html')).size;
     const gz = await rawGet(`${base}/?token=${token}`, { 'accept-encoding': 'gzip' });
@@ -2005,11 +1974,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(br.headers['content-encoding'], 'br');
     assert.strictEqual(plain.headers['content-encoding'], undefined);
     assert.strictEqual(plain.body.length, raw);
-    // Raised twice by the owner: 40,000/34,000 -> 45,000/38,000 for plan 5, then
-    // 48,000/41,000 for plan 6's page halves (F5-F11, measured 47,220/40,046).
-    // The shell is now an ETag 304 and cached by the worker, so this is the
-    // first-open cost. It guards against unplanned growth; raise it only with
-    // the owner.
     assert.ok(gz.body.length <= 48000, `gzip shell is ${gz.body.length} bytes`);
     assert.ok(br.body.length <= 41000, `brotli shell is ${br.body.length} bytes`);
     assert.strictEqual(require('zlib').gunzipSync(gz.body).length, raw, 'the compressed body must be the same page');
@@ -2036,8 +2000,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(small.headers['content-encoding'], undefined);
   }));
 
-  // Every tool call bumped `health`, so every open page refetched the whole
-  // bridge status and THEN the transcript.
   await checkAsync('stream: activity moves the run counter and leaves health alone', () => withServer(async ({ call, app }) => {
     await call('POST', '/api/run/start', { engine: 'claude', thread: 'main', message: 'm' });
     const before = { ...app.versions };
@@ -2072,7 +2034,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.deepStrictEqual((await call('GET', '/api/run/kill')).body, { killRequested: true });
   }));
 
-  // The hook polled every 3 s, so an Approve took up to 3 s to register.
   await checkAsync('ask: a waiting poll returns as soon as the question is answered', () => withServer(async ({ call }) => {
     const { id } = (await call('POST', '/api/ask', { question: 'q', command: 'git push' })).body;
     const started = Date.now();
@@ -2084,7 +2045,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     const took = Date.now() - started;
     console.log(`    [D4] answer seen ${took} ms after the ask (150 ms of that was the test's own delay)`);
     assert.ok(took < 1000, `took ${took} ms`);
-    // And it does not hang past its own limit when nobody answers.
     const { id: id2 } = (await call('POST', '/api/ask', { question: 'q2' })).body;
     const t0 = Date.now();
     assert.strictEqual((await call('GET', `/api/state?id=${id2}&wait=1`)).body.status, 'pending');
@@ -2175,7 +2135,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(await watcher.writeDiff({ cfg, paths: { artifacts: dir }, runId: 'r', thread: 'main', headBefore: null, workspace: dir }), null);
   });
 
-  // The one token that is not the owner's. It must reach exactly one route.
   await checkAsync('inbound: a scoped token can queue a message and do nothing else', () => withServer(async ({ base, call, paths }) => {
     fs.mkdirSync(paths.inbound, { recursive: true });
     const t = 'inbound-' + crypto.randomBytes(18).toString('hex');
@@ -2192,7 +2151,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
       const r = await fetch(`${base}${p}`, { method, headers: h, body: method === 'POST' ? '{}' : undefined });
       assert.strictEqual(r.status, 401, `${method} ${p} must be closed to an inbound token`);
     }
-    // A token file whose name is not a thread slug, or whose token is short, is ignored.
     fs.writeFileSync(path.join(paths.inbound, 'Bad Name.token'), t + 'x');
     fs.writeFileSync(path.join(paths.inbound, 'short.token'), 'abc');
     assert.strictEqual((await fetch(`${base}/api/inbox`, { method: 'POST', headers: { authorization: 'Bearer abc', 'content-type': 'application/json' }, body: '{"message":"x"}' })).status, 401);
@@ -2218,7 +2176,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(configmod.workspaceFor(cfg, 'homelab'), path.resolve('/srv/lab'));
     assert.strictEqual(configmod.workspaceFor(cfg, 'main'), cfg.workspace);
     assert.strictEqual(configmod.workspaceFor(cfg, 'bad'), cfg.workspace);
-    // `constructor` exists on every plain object.
     assert.strictEqual(configmod.workspaceFor(cfg, 'constructor'), cfg.workspace);
     const prompt = watcher.buildPrompt({ item: { message: 'hi' }, thread: { name: 'homelab' }, engine: cfg.engines.claude, cfg, secretsDir: '/s', workspace: '/srv/lab' });
     assert.ok(prompt.includes('Working directory: /srv/lab'));
@@ -2244,8 +2201,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(await watcher.spendHeld({ ...mk(50), cfg: { spendGuard: { dailyUsd: 0 } } }), false, '0 disables it');
   });
 
-  // Every reply buzzed every device, at any hour. Muting must never reach an
-  // approval: the hook denies on a timeout, so a silenced ask is a lost command.
   const quietKeys = push.generateVapidKeys();
   await checkAsync('quiet: a muted thread and quiet hours skip the push, and an approval never does', () => withServer(async ({ call, app }) => {
     assert.strictEqual(app.inQuietHours({ from: '22:00', to: '07:00' }, new Date(2026, 0, 1, 23, 0)), true);
@@ -2265,13 +2220,10 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
       await call('POST', '/api/ask', { question: 'Approve?', command: 'git push' });
       await new Promise((r) => setTimeout(r, 80));
     } finally { push.sendNotification = orig; }
-    // Sorted: deliveries are not awaited, so their order is not part of the contract.
     assert.deepStrictEqual(sent.map((s) => s.kind).sort(), ['ask', 'reply']);
     assert.strictEqual((await call('GET', '/api/notifications')).body.items.length, 2, 'a muted reply is still stored and shown');
   }, { ctx: { pushKeys: () => quietKeys, pushSubs: () => [{ endpoint: 'https://push.example/q', keys: { p256dh: 'a', auth: 'b' } }] } }));
 
-  // A run making ten pushes asked ten times. The widening must stay inside one
-  // rule family and one run, and never apply to a rule the config does not list.
   await checkAsync('relay scope: approved for the run, not beyond it, and never for an unlisted rule', () => withServer(async ({ call }) => {
     await call('POST', '/api/run/start', { runId: 'r1', engine: 'claude', thread: 'main', message: 'm' });
     const a = (await call('POST', '/api/ask', { question: 'q', command: 'git push', rule: 'git' })).body.id;
@@ -2280,22 +2232,17 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual((await call('GET', `/api/state?id=${b}`)).body.answer, 'Approve', 'the second git command is answered without a tap');
     const steps = (await call('GET', '/api/run/transcript?engine=claude&since=0')).body.lines.map((l) => l.text);
     assert.ok(steps.some((t) => /^auto-approved \(git\)/.test(t)), 'an auto-approval must be visible in the steps');
-    // A different rule still asks.
     const c = (await call('POST', '/api/ask', { question: 'q', command: 'rm -rf x', rule: 'destructive-fs' })).body.id;
     assert.strictEqual((await call('GET', `/api/state?id=${c}`)).body.status, 'pending');
-    // A rule that is not scopable cannot be widened even if the phone asks.
     await call('POST', '/api/answer', { id: c, answer: 'Approve', scope: 'run' });
     const d = (await call('POST', '/api/ask', { question: 'q', command: 'rm -rf y', rule: 'destructive-fs' })).body.id;
     assert.strictEqual((await call('GET', `/api/state?id=${d}`)).body.status, 'pending');
-    // The scope dies with the run.
     await call('POST', '/api/run/end', {});
     await call('POST', '/api/run/start', { runId: 'r2', engine: 'claude', thread: 'main', message: 'm' });
     const e = (await call('POST', '/api/ask', { question: 'q', command: 'git push', rule: 'git' })).body.id;
     assert.strictEqual((await call('GET', `/api/state?id=${e}`)).body.status, 'pending', 'a new run starts with nothing approved');
   }));
 
-  // The step list lived in memory and the next run wiped it, so "what did it
-  // actually do last night" had no answer. The id becomes a filename.
   await checkAsync('run history: steps are stored when a run ends, read by id, and the id cannot be a path', () => withServer(async ({ call }) => {
     await call('POST', '/api/run/start', { runId: 'run-abc', engine: 'claude', thread: 'main', message: 'm' });
     await call('POST', '/api/run/activity', { engine: 'claude', activities: ['Read a.js', 'Edit a.js'] });
@@ -2308,8 +2255,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual((await call('GET', '/api/notifications')).body.items[0].runId, null, 'a run id that is not allow-listed is dropped');
   }));
 
-  // Repeats were three fixed patterns, and a scheduled item could only be
-  // cancelled - not paused, and not run early without moving its time of day.
   check('repeats: chosen days land on the next chosen day at the same time', () => {
     const { isRepeat } = require('../src/server');
     assert.ok(isRepeat('days:1,3,5') && isRepeat('daily') && !isRepeat('days:7') && !isRepeat('days:') && !isRepeat('hourly'));
@@ -2318,7 +2263,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(next.getDay(), 1, 'Friday -> Monday');
     assert.strictEqual(next.getHours(), 8);
     assert.strictEqual(next.getMinutes(), 30);
-    // Asleep for a fortnight: one catch-up slot, not fourteen.
     const later = fri + 14 * 86400000;
     assert.ok(nextOccurrence(fri, 'days:1,3', later) > later);
   });
@@ -2337,10 +2281,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(left[0].runAfter, when, 'the standing job keeps its own time');
   }));
 
-  // The page halves of F5-F11 have no browser test. These pin the parts a
-  // careless edit would break silently: the scoped Approve offered on the
-  // strip, its answer word, stored steps built as markup, and an inherited
-  // property read as a thread's workspace.
   check('page: run-scoped approval, steps, schedule words and the thread workspace line', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
     const fill = /function fillAskOpts\(s, host, compact\) \{[\s\S]*?\n  \}/.exec(html)[0];
@@ -2365,9 +2305,6 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(sync(null, 'main'), '', 'nothing to say before health arrives');
   });
 
-  // A manifest is fetched without cookies unless the link says otherwise, so it
-  // got a 401 and install and the share target never loaded. Found in a
-  // headless Edge pass; no browser test exists, so pin both halves here.
   await checkAsync('manifest: the link sends the cookie, and the cookie alone is enough', () => withServer(async ({ base, token }) => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
     assert.ok(/<link rel="manifest" href="\/manifest\.json" crossorigin="use-credentials">/.test(html));

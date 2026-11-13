@@ -111,9 +111,6 @@ const DEFAULTS = {
   // time, NOT the home directory: an agent running unattended with write access
   // to an entire user profile is a decision someone should make on purpose.
   workspace: '',
-  // Threads that run somewhere other than `workspace`. Keys are thread names
-  // (the slug form), values are directories. Set here and nowhere else: this
-  // is the boundary of what the agent may touch, so the phone cannot change it.
   threadWorkspaces: {},
 
   // Passed straight through to the engine. 'default' means the agent's own
@@ -151,9 +148,6 @@ const DEFAULTS = {
     // by default: turn it on only if merging into your own private repos is
     // something you would approve without reading anyway.
     privateMergeWithoutTap: false,
-    // Rule families the phone may approve "for the rest of this run". Only git
-    // by default: a push is recoverable; a recursive delete or an upload after
-    // reading untrusted content is not something to wave through in bulk.
     runScopedRules: ['git'],
   },
 
@@ -166,23 +160,10 @@ const DEFAULTS = {
   // claude-json are guarded - the gauges are Anthropic's.
   usageGuard: { maxPercent: 0, announceEveryMs: 30 * 60 * 1000 },
 
-  // --- spend guard -----------------------------------------------------------
-  // Before a message is popped, today's recorded cost (local day) is checked;
-  // at or above dailyUsd the message stays queued and the phone is told, at
-  // most once per announceEveryMs. 0 disables it. Only runs that report a cost
-  // are counted, so an engine that reports none is never held by this.
   spendGuard: { dailyUsd: 0, announceEveryMs: 30 * 60 * 1000 },
 
-  // --- watchdog --------------------------------------------------------------
-  // A message that has been due for this long with no run in flight and no
-  // guard holding it means the watcher is not running. The phone gets one
-  // notice per stuck message. 0 disables it.
   watchdog: { staleMs: 10 * 60 * 1000 },
 
-  // --- diff ------------------------------------------------------------------
-  // After a run that edited files in a git workspace, the changes since the
-  // run started are written to artifacts/ as a page and linked from the reply.
-  // Read-only git, bounded in time and size. Off = no git is ever spawned.
   diff: { enabled: true, maxBytes: 512 * 1024, timeoutMs: 10 * 1000 },
 
   // --- long threads ----------------------------------------------------------
@@ -210,9 +191,6 @@ const DEFAULTS = {
   notificationRing: 30,
   transcriptRing: 200,
   archiveMaxBytes: 4 * 1024 * 1024,
-  // How many rotated archive files a search or a spend rollup reads, newest
-  // first, on top of the live one. Older files stay on disk and are still
-  // covered by a delete; they are just not searched.
   archiveSearchFiles: 12,
 
   // --- misc ----------------------------------------------------------------
@@ -220,9 +198,6 @@ const DEFAULTS = {
   // watcher the instant a message is queued, so this is only the safety net
   // for a message queued while the loop was busy.
   watchIntervalMs: 60 * 1000,
-  // How often the change stream sends a ping. The page counts any stream
-  // message as contact with the bridge, so this is also how quickly a dead
-  // connection is noticed (two missed pings).
   ssePingMs: 25 * 1000,
   logLevel: 'info',
 };
@@ -317,8 +292,6 @@ function load(opts) {
     cfg.defaultEngine = 'claude';
   }
   cfg.port = Number(cfg.port) || DEFAULTS.port;
-  // Read with .filter and .includes. A string there would throw in audit() at
-  // startup, or worse, turn .includes into a substring match.
   if (cfg.relay && !Array.isArray(cfg.relay.runScopedRules)) {
     cfg.relay.runScopedRules = typeof cfg.relay.runScopedRules === 'string' ? [cfg.relay.runScopedRules] : [];
   }
@@ -337,10 +310,6 @@ function containsPath(outer, inner, platform = process.platform) {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${p.sep}`) && !p.isAbsolute(rel));
 }
 
-// The directory a thread's runs happen in. An unlisted thread, or a listed one
-// whose value is not a string, uses the default workspace. hasOwnProperty, not
-// map[name]: the name comes from a request, and `constructor` exists on every
-// plain object.
 function workspaceFor(cfg, threadName) {
   const map = cfg.threadWorkspaces || {};
   const raw = Object.prototype.hasOwnProperty.call(map, threadName) ? map[threadName] : null;

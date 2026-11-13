@@ -406,10 +406,6 @@ function decideReroute({ item, cfg, engineName, result }) {
 // ---------------------------------------------------------------------------
 // One turn
 
-// One post in flight at a time, in order. The updates used to be fired and
-// forgotten: two of them racing could arrive out of order and leave an older
-// draft on the phone, and every tool call cost a request of its own. Labels
-// are never dropped (each is a transcript line); the draft is latest-wins.
 function activitySender(post) {
   let labels = [];
   let draft;
@@ -431,9 +427,6 @@ function activitySender(post) {
   };
 }
 
-// A bounded, read-only git call. Resolves the output, or null for ANY failure:
-// not a repository, git not installed, too slow, too large. A diff is a
-// convenience and must never be the reason a reply is late or lost.
 function gitOut(args, cwd, { timeoutMs = 10000, maxBytes = 512 * 1024 } = {}) {
   return new Promise((resolve) => {
     execFile('git', args, { cwd, timeout: timeoutMs, maxBuffer: maxBytes, windowsHide: true },
@@ -441,8 +434,6 @@ function gitOut(args, cwd, { timeoutMs = 10000, maxBytes = 512 * 1024 } = {}) {
   });
 }
 
-// The page for a diff. Everything from git is escaped: a filename or a line of
-// source is exactly the kind of text that contains markup.
 function diffHtml({ runId, thread, stat, patch, untracked }) {
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -456,7 +447,6 @@ ${untracked.length ? `<h2>new files, not yet tracked</h2><pre>${esc(untracked.jo
 </main></body></html>`;
 }
 
-// Returns a footer note, or null. Never throws.
 async function writeDiff({ cfg, paths, runId, thread, headBefore, workspace }) {
   const d = cfg.diff || {};
   if (!d.enabled || !headBefore) return null;
@@ -482,9 +472,6 @@ async function processOne(ctx, item) {
   const engineName = cfg.engines[item.engine] ? item.engine : cfg.defaultEngine;
   const engine = cfg.engines[engineName];
   const thread = threads.read(paths, item.thread);
-  // Per-thread directory (config only: it is the boundary of what the agent may
-  // touch). Every use below - prompt, args, cwd, shrink, diff - takes this one
-  // value, so a run cannot be told one directory and started in another.
   const workspace = workspaceFor(cfg, thread.name);
   const runId =`${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -510,8 +497,6 @@ async function processOne(ctx, item) {
   // why" is an answer it can act on - an unhandled rejection is not.
   const resolved = resolveCommand(engine.command);
 
-  // `post` is client.tryPost, which never rejects, so pump cannot throw and
-  // leave `busy` stuck. Do not swap in client.post.
   const sendActivity = activitySender((body) => client.tryPost('/api/run/activity', { runId, engine: engineName, ...body }));
 
   const runWith = async (sessionId) => {
@@ -542,9 +527,6 @@ async function processOne(ctx, item) {
       runTimeoutMs: cfg.runTimeoutMs,
       env: hookEnv({ cfg, paths, client }),
       log,
-      // Not awaited by the parse loop: an activity update that fails to post
-      // costs one line on a status panel, and a slow round trip must not
-      // throttle parsing. The sender queues and batches instead.
       onActivity: sendActivity,
       isKillRequested: async () => {
         const r = await client.tryGet('/api/run/kill');
@@ -553,9 +535,6 @@ async function processOne(ctx, item) {
     });
   };
 
-  // The commit the workspace was on before the run, so the diff covers what the
-  // run committed as well as what it left uncommitted. null when the workspace
-  // is not a git repository, which simply means no diff.
   const headBefore = cfg.diff && cfg.diff.enabled
     ? ((await gitOut(['rev-parse', 'HEAD'], workspace, { timeoutMs: 5000 })) || '').trim() || null
     : null;
@@ -668,7 +647,6 @@ async function processOne(ctx, item) {
       costUsd: result.costUsd,
       durationMs: result.durationMs,
       numTurns: result.numTurns,
-      // So the reply can open this run's stored steps (GET /api/run/history).
       runId,
     });
   } catch (e) {
@@ -762,8 +740,6 @@ async function usageHeld(ctx) {
   return true;
 }
 
-// The spend guard. Same shape and same reasons as usageHeld: decides BEFORE the
-// pop, and fails open - spend unreadable means "go ahead".
 async function spendHeld(ctx) {
   const { cfg, client, paths, log } = ctx;
   const g = cfg.spendGuard || {};

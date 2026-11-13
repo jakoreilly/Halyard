@@ -638,9 +638,6 @@ async function main() {
   while (Date.now() < deadline) {
     const asked = Date.now();
     try {
-      // By id: with several questions pending, the bare /api/state is somebody
-      // else's question as often as it is this one.
-      // wait=25 asks the bridge to hold the request until the answer arrives.
       const stateRes = await fetch(`${BASE}/api/state?id=${encodeURIComponent(id)}&wait=25&token=${token}`, { signal: AbortSignal.timeout(35000) });
       const state = await stateRes.json();
       if (state.status === 'answered') {
@@ -648,14 +645,10 @@ async function main() {
           ? decide('allow', 'approved via phone relay')
           : decide('deny', 'denied via phone relay');
       }
-      // The bridge restarted and lost the question. Nobody can answer it now,
-      // so stop waiting out the rest of the timeout.
       if (state.status === 'gone') { why = 'the bridge restarted before this was answered'; break; }
     } catch (e) {
       // transient poll failure, keep trying until deadline
     }
-    // A bridge that ignored `wait` (or failed fast) answers at once. Without
-    // this the loop would spin; with it, it degrades to the old 3 s poll.
     if (Date.now() - asked < 1000) await sleep(POLL_MS);
   }
   // Recorded so the phone's "Needs your tap" card can offer it again later; a

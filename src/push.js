@@ -140,9 +140,6 @@ function encryptPayload(plaintext, uaPublicB64, authSecretB64) {
 // ---------------------------------------------------------------------------
 // Delivery
 
-// The header is a signed JWT valid for 12 h. Signing one per notification per
-// device is wasted work; one per push service per 6 h is enough, and still
-// leaves 6 h of validity on the oldest one handed out.
 const vapidCache = new Map();
 function cachedVapidHeader(endpoint, keys, subject) {
   const key = `${new URL(endpoint).origin}|${keys.publicKey}|${subject}`;

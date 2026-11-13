@@ -30,11 +30,6 @@ const SHELL_URLS = ['/icon.svg'];
 // redirects to. Never touched by the activate cleanup below, or a worker update
 // in between would eat a share in flight.
 const SHARE_CACHE = 'halyard-share';
-// The last page shell the network returned, kept so the app still opens with
-// no signal and can park a message in its outbox. Filled at RUNTIME from a
-// real navigation, never precached: the shell is behind the token, and a
-// precache entry that 401s is how an install used to fail (see the top of this
-// file). The key carries no token; the cached HTML contains none either.
 const PAGE_CACHE = 'halyard-page';
 const PAGE_KEY = '/__shell';
 
@@ -74,13 +69,10 @@ self.addEventListener('fetch', (event) => {
 async function pageNetworkFirst(request) {
   const cache = await caches.open(PAGE_CACHE);
   try {
-    // Four seconds: a tunnel that is down often hangs rather than fails, and
-    // waiting out the browser's own timeout is a minute of white screen.
     const res = await Promise.race([
       fetch(request),
       new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000)),
     ]);
-    // Only a good shell is kept. A 401 page must never replace it.
     if (res.ok) cache.put(PAGE_KEY, res.clone()).catch(() => {});
     return res;
   } catch (e) {
@@ -143,10 +135,6 @@ self.addEventListener('push', (event) => {
   // approval left unanswered still denies on the relay's timeout. Don't go back
   // to two buttons without re-testing on a real Android phone.
   const askOptions = Array.isArray(payload.actions) ? payload.actions.filter(Boolean).slice(0, 1) : [];
-  // `review` means the command was too long for the notification body. Offering
-  // Approve there would be approving text that was cut off, so the notification
-  // carries no actions at all and a tap opens the page, where the whole command
-  // is on screen.
   const actions = payload.review
     ? []
     : (payload.kind === 'ask' && askOptions.length

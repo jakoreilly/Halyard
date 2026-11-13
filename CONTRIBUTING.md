@@ -59,7 +59,7 @@ read that first — they all look like obvious simplifications.
 | `/api/logs` takes a **key**, never a path | The token file is in the same directory |
 | Thread names are an **allow-list** of `[a-z0-9-]` | The string becomes a filename |
 | `null` means "not reported"; `0` is a real value | A footer reading `$0.00` because a field moved is worse than one with fewer items |
-| The change stream carries **counters, not data** | Every render path stays the tested poll function; activity has its own counter so a tool call is one request |
+| The change stream carries **counters, not data** | Health is refetched on every activity bump |
 
 ## Adding an engine
 

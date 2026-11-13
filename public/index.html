@@ -347,7 +347,6 @@
   .reply .text .md-l li { margin-bottom: 2px; }
   .reply .text .md-q { border-left: 2px solid var(--hair); padding-left: var(--s-2); color: var(--ink-2); margin: 0 0 var(--s-2); }
   .reply .text .md-hr { border: 0; border-top: 1px solid var(--rule); margin: var(--s-3) 0; }
-  /* A reply that runs past a screen is cut, and says so with a button. */
   .reply .text.clamp { max-height: 30em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 3em), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 3em), transparent); }
   /* What was sent reads as the reader's own turn: a bubble at the top and
      on the right, with the answer below it on the left. */
@@ -549,7 +548,6 @@
   @media (pointer: coarse) {
     input, textarea, select,
     input.small, input.tiny, select.small, .compose select, .compose textarea { font-size: 16px; }
-    /* 28px is under a fingertip. */
     button.sm, a.btn { min-height: 40px; padding: 8px 12px; font-size: 13.5px; }
     .rail .badge, .reply .meta { font-size: 12px; }
     .snip { min-height: 36px; padding: 6px 12px; font-size: 13.5px; }
@@ -949,8 +947,6 @@
     set: function (k, v) { try { localStorage.setItem('halyard.' + k, JSON.stringify(v)); } catch (e) {} }
   };
 
-  // The token goes in a header, never the URL: a query string is written to
-  // every tunnel and proxy access log between the phone and this machine.
   function authHeaders(extra) {
     var h = {};
     for (var k in (extra || {})) h[k] = extra[k];
@@ -977,10 +973,6 @@
     return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }
 
-  // ---------------------------------------------------------------------
-  // Toast: says what happened and gets out of the way. `kind` is 'ok', 'bad'
-  // or absent. A failure carries the word "Error" as well as the red stripe,
-  // because colour is never the only channel on this page.
   function toast(text, opts) {
     opts = opts || {};
     var host = $('toasts');
@@ -1000,14 +992,11 @@
       el.appendChild(b);
     }
     host.appendChild(el);
-    // Three at most: a burst of failures must not bury the page.
     while (host.children.length > 3) host.removeChild(host.firstChild);
     timer = setTimeout(function () { close(); if (opts.onExpire) opts.onExpire(); }, opts.ms || (opts.kind === 'bad' ? 8000 : 4000));
     return close;
   }
 
-  // Sheet: one question, two buttons. Resolves true/false, or - when
-  // opts.input is set - the trimmed text, or null if cancelled.
   function sheet(opts) {
     return new Promise(function (resolve) {
       var prevFocus = document.activeElement;
@@ -1055,7 +1044,6 @@
         if (e.key === 'Escape') { e.preventDefault(); done(none); return; }
         if (e.key === 'Enter' && (!input || document.activeElement === input)) { e.preventDefault(); ok.click(); return; }
         if (e.key === 'Tab') {
-          // Keep focus inside the sheet while it is open.
           var f = [input, cancel, ok].filter(Boolean);
           var i = f.indexOf(document.activeElement);
           e.preventDefault();
@@ -1148,21 +1136,17 @@
     b.classList.toggle('set', e.selectedIndex > 0 || m.value !== '' || w.value !== '');
     b.title = 'Send options: ' + parts.join(', ');
     b.setAttribute('aria-label', b.title);
-    // The dot says "not the defaults"; this says what.
     var s = $('opts-summary');
     var on = b.classList.contains('set');
     s.classList.toggle('hidden', !on);
     s.textContent = on ? 'Sending with: ' + parts.join(' · ') : '';
   }
-  // Grows with what is typed, up to the same 38vh the stylesheet caps it at.
-  // A drag handle is not a touch control.
   function growMsg() {
     var m = $('msg');
     m.style.height = 'auto';
     m.style.height = Math.min(m.scrollHeight + 2, Math.round(window.innerHeight * 0.38)) + 'px';
   }
   function syncEnterHint() {
-    // The keyboard's action key says "send" only when Enter actually sends.
     $('msg').setAttribute('enterkeyhint', LS.get('enterSends', false) ? 'send' : 'enter');
   }
   window.addEventListener('resize', measureBar);
@@ -1217,10 +1201,6 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
-  // Inline forms, on text that is ALREADY escaped. Anything turned into markup
-  // is parked in `held` and replaced by a NUL-delimited index, so a later rule
-  // cannot re-read it: a URL inside a code span stays code, a `**` inside a
-  // link label stays a label.
   function inline(h) {
     var held = [];
     var hold = function (html) { held.push(html); return '\u0000' + (held.length - 1) + '\u0000'; };
@@ -1228,12 +1208,9 @@
       return hold('<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>');
     };
     h = h.replace(/`([^`\n]+)`/g, function (m, c) { return hold('<code>' + c + '</code>'); });
-    // [label](url): only http(s) and this bridge's own artifacts. Anything
-    // else - javascript:, data:, a relative path - is left as the text it was.
     h = h.replace(/\[([^\]\n]+)\]\((https?:\/\/(?:[^\s<&)]|&amp;)+|\/artifacts\/[A-Za-z0-9._\-\/%]+)\)/g, function (m, label, url) {
       return link(url, label);
     });
-    // The text is already escaped, so a real `&` in a URL is `&amp;` here.
     h = h.replace(/(https?:\/\/(?:[^\s<&]|&amp;)+)/g, function (m) {
       var tail = /[.,;:!?)\]]+$/.exec(m);
       var url = tail ? m.slice(0, m.length - tail[0].length) : m;
@@ -1244,13 +1221,7 @@
     return h.replace(/\u0000(\d+)\u0000/g, function (m, i) { return held[Number(i)] || ''; });
   }
 
-  // Escape FIRST, then re-add a small fixed set of tags. Nothing else passes
-  // through, so a reply can never inject markup - which matters because the
-  // reply text is written by a language model that has been reading whatever
-  // it was pointed at. Block forms: fenced code, headings, lists, quotes,
-  // rules, and pipe tables (shown as preformatted text, not parsed).
   function renderRich(s) {
-    // NUL is the placeholder delimiter in inline(); it has no business in a reply.
     var lines = esc(String(s == null ? '' : s).replace(/\u0000/g, '')).split('\n');
     var out = [];
     var para = [];
@@ -1286,7 +1257,6 @@
         out.push('<pre class="code">' + rows.join('\n') + '</pre>');
         continue;
       }
-      // `>` was escaped to `&gt;` before this loop.
       if (/^&gt;\s?/.test(line)) {
         flush();
         var quote = [];
@@ -1323,18 +1293,12 @@
       speaking = null;
       speechSynthesis.cancel();
       if (prev.reset) prev.reset();
-      // Tapping the button that is reading means Stop. The old code cleared
-      // `speaking` and THEN compared it, so this never matched and the reply
-      // started again from the top.
       if (prev.btn === btn) return;
     }
     // URLs read out as forty characters of token, one at a time. Deleting them
     // leaves a sentence that no longer makes sense, so they become "link".
     var u = new SpeechSynthesisUtterance(String(text).replace(/https?:\/\/\S+/g, 'link').replace(/\/artifacts\/\S+/g, 'link'));
     var mine = { btn: btn, reset: reset };
-    // cancel() fires the OLD utterance's onend asynchronously. It must only
-    // clear the state if it is still the current one, or it resets the button
-    // of whatever started speaking after it.
     u.onend = u.onerror = function () {
       if (speaking !== mine) return;
       speaking = null;
@@ -1468,10 +1432,6 @@
       : 'This engine has no pre-tool hook, so it cannot be steered mid-run.';
   }
 
-  // One fetch at a time, and a line is appended only if it is newer than the
-  // last one appended. Each health response with a higher counter used to start
-  // its own fetch with the same `since`; two in flight appended the same lines
-  // twice.
   var transcriptBusy = false;
   var transcriptAgain = false;
   var lastLineSeq = 0;
@@ -1482,8 +1442,6 @@
     api('/api/run/transcript?engine=' + encodeURIComponent(engine || '') + '&since=' + (lastSeq.v || 0))
       .then(function (t) {
         lastSeq.v = t.seq;
-        // The activity line rides on this response, so a tool call does not
-        // need a health refetch to move it.
         if (health && health.activeRun && t.activity) {
           health.activeRun.activity = t.activity;
           $('run-activity').textContent = t.activity;
@@ -1593,9 +1551,6 @@
     // through to a button default here would send the literal word "Approve"
     // back as the answer to "which of these did you mean?", and the run would
     // act on it.
-    // The strip shows two clamped lines. A command that does not fit there must
-    // not be approvable from there: the cut-off part is where a chained
-    // `&& git push --force` would sit.
     var tooLong = compact && (String(s.command || '').length > 80 || /\n/.test(String(s.command || '')));
     if (compact && (!s.options.length || tooLong)) {
       var open = document.createElement('button');
@@ -1632,10 +1587,6 @@
       };
       host.appendChild(b);
     });
-    // Full card only, never the strip or the lock screen: it grants more than
-    // the one command on screen. A ghost button, so plain Approve stays the
-    // default. The answer is still the exact word 'Approve' - the hook allows
-    // on nothing else - and the scope rides in its own field.
     if (!compact && health && health.activeRun && s.rule && ((health.relay || {}).runScopedRules || []).indexOf(s.rule) !== -1) {
       var all = document.createElement('button');
       all.className = 'ghost sm';
@@ -1708,8 +1659,6 @@
     $('ask').querySelector('h2').textContent = s.pending > 1 ? 'needs your answer (1 of ' + s.pending + ')' : 'needs your answer';
     $('ask-cmd').textContent = s.command;
     $('ask-cmd').classList.toggle('hidden', !s.command);
-    // Which rule fired, where, and how long is left - built with DOM calls and
-    // textContent only, because the directory comes from the agent.
     var meta = $('ask-meta');
     meta.innerHTML = '';
     if (s.rule && RULE_LABEL[s.rule]) {
@@ -1743,9 +1692,6 @@
   // - it renders straight from what was saved here, so it is still there even
   // if the archive is unreachable or the original entry has since been
   // deleted.
-  // Pins and snippets used to live only in this browser. The server copy is the
-  // truth; localStorage is the copy that renders before the server answers and
-  // while it cannot be reached.
   var prefs = {};
   function savePref(key, value) {
     prefs[key] = value;
@@ -1756,14 +1702,10 @@
   function loadPrefs() {
     return api('/api/prefs').then(function (p) {
       prefs = p || {};
-      // First run after this feature: the server has nothing, this browser has
-      // something. Hand it over once rather than appear to lose it.
       if (prefs.pins === undefined && LS.get('pinned', []).length) savePref('pins', LS.get('pinned', []));
       if (prefs.snippets === undefined && LS.get('snippets', null)) savePref('snippets', LS.get('snippets', []));
       repliesKey = null;
       renderPinned(); renderSnips(); renderReplies(allReplies);
-      // Only where it is on screen: it fetches the thread list, and this runs
-      // on every context bump. setView renders it on the way in.
       if (view === 'system') renderQuiet();
     }).catch(function () {});
   }
@@ -1823,14 +1765,11 @@
       '<div class="meta">' + meta.map(esc).join('  ') + '</div>' +
       (n.prompt && !opts.pinnedOnly ? '<div class="prompt small">' + esc(n.prompt.slice(0, 200)) + '</div>' : '') +
       '<div class="text">' + renderRich(n.message) + '</div>';
-    // Relative times only say "3h ago"; the exact time is one tap away.
     var metaEl = el.querySelector('.meta');
     var exact = new Date(n.at).toLocaleString();
     metaEl.title = exact;
     metaEl.onclick = function () { toast(exact); };
     var textEl = el.querySelector('.text');
-    // A copy button per code block: selecting a block by hand on a phone is the
-    // slowest thing on this page.
     Array.prototype.forEach.call(textEl.querySelectorAll('pre.code'), function (pre) {
       var cb = document.createElement('button');
       cb.className = 'ghost sm'; cb.textContent = 'Copy code';
@@ -1920,8 +1859,6 @@
         setTimeout(function () { b.textContent = 'Follow up'; }, 1400);
         $('msg').focus();
       });
-      // The run's step list, stored when it ended. Fetched on the tap, built
-      // once, and a second tap folds it. Text only: these lines are the agent's.
       var stepsEl = null;
       if (n.runId) act('Steps', function (b) {
         if (stepsEl) { stepsEl.open = !stepsEl.open; return; }
@@ -1942,17 +1879,12 @@
           toast(e.status === 404 ? 'The steps for that run are no longer stored.' : 'Could not load the steps: ' + e.message, { kind: e.status === 404 ? undefined : 'bad' });
         });
       });
-      // Not confirmed up front. The reply disappears, a toast offers Undo for
-      // six seconds, and only then is it deleted from the archive - which is
-      // permanent. Closing the page inside those six seconds keeps the reply,
-      // which is the safe direction to fail in.
       act('Delete', function () {
         el.classList.add('hidden');
         toast('Reply deleted.', {
           action: 'Undo', ms: 6000,
           onAction: function () { el.classList.remove('hidden'); },
           onExpire: function () {
-            // Paged-in older replies survive a poll (withOlder), so a deleted one must leave the list too.
             allReplies = allReplies.filter(function (x) { return x.id !== n.id; });
             api('/api/notifications?id=' + encodeURIComponent(n.id), { method: 'DELETE' })
               .then(pollNotifications)
@@ -2006,8 +1938,6 @@
 
   function renderReplies(items) {
     allReplies = items;
-    // Rebuilding thirty replies under a finger resets "Copied", drops a text
-    // selection and re-runs the renderer. Skip it when nothing visible changed.
     var key = items.map(function (n) { return n.id; }).join(',') + '|' + threadFilter + '|' + thread() + '|' +
       pinnedList().map(function (p) { return p.id; }).join(',');
     if (key === repliesKey) return;
@@ -2016,7 +1946,6 @@
     refreshCues();
     var shown = threadFilter ? items.filter(function (n) { return n.thread === threadFilter; }) : items;
     setBadge('replies', shown.length ? String(shown.length) : '');
-    // Paging back only makes sense on the plain list, not on search results.
     $('older').classList.toggle('hidden', !shown.length || !!$('search').value.trim());
 
     var box = $('replies');
@@ -2030,9 +1959,6 @@
     renderConversation();
   }
 
-  // Now shows the thread the next message will go to: its recent replies,
-  // oldest first, so the page reads downwards into the message box. "Latest
-  // reply" used to show whatever arrived last on ANY thread.
   function renderConversation() {
     var t = thread();
     var mine = allReplies.filter(function (n) { return (n.thread || 'main') === t; }).slice(0, 10).reverse();
@@ -2144,7 +2070,6 @@
           '<span class="value">$' + s.totalUsd.toFixed(2) + '</span>' +
           '<span class="over">over ' + s.runs + ' run(s) in ' + spendDays + ' days' +
             (s.runs ? ', $' + (s.totalUsd / s.runs).toFixed(3) + ' each' : '') +
-            // The cap is useless as a number nobody can see approaching.
             (health && health.spendGuard && health.spendGuard.dailyUsd > 0 && Number.isFinite(s.todayUsd)
               ? ' · today $' + s.todayUsd.toFixed(2) + ' of $' + health.spendGuard.dailyUsd.toFixed(2) : '') + '</span>' +
         '</div>' +
@@ -2178,9 +2103,6 @@
 
   function pollHealth() { return api('/api/health').then(function (h) { renderHealth(h); flushOutbox(); }).catch(connDown); }
   function pollState() { return api('/api/state').then(renderState).catch(function () {}); }
-  // The ring only holds the newest replies. Entries the phone paged in with
-  // "Load older replies" are older than its oldest, so they are kept and put
-  // after it; replacing wholesale would drop them on the next poll.
   function withOlder(ring) {
     if (!ring.length || $('search').value.trim()) return ring;
     var oldest = ring[ring.length - 1].at;
@@ -2208,8 +2130,6 @@
         syncThreadWs();
       }).catch(function () {});
   }
-  // Where this thread's runs happen (threadWorkspaces, set on the machine only).
-  // hasOwnProperty: a thread called "constructor" must not read Object's.
   function syncThreadWs() {
     var map = (health && health.threadWorkspaces) || {}, cur = thread();
     var ws = Object.prototype.hasOwnProperty.call(map, cur) ? map[cur] : (health && health.workspace);
@@ -2230,7 +2150,6 @@
   function pollQueue() {
     return api('/api/inbox').then(function (r) {
       var now = Date.now();
-      // A paused item stays scheduled even after its time passes; see isDue().
       var due = r.items.filter(function (i) { return !i.paused && (!i.runAfter || i.runAfter <= now); });
       $('queue-box').classList.toggle('hidden', !due.length);
       $('queue-title').textContent = 'waiting (' + due.length + ')';
@@ -2243,7 +2162,6 @@
       }).join('');
     }).catch(function () {});
   }
-  // A repeat in words: "days:1,3" reads "Mon, Wed", not the wire format.
   var DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   function repeatWords(r) {
     var m = /^days:(.+)$/.exec(r || '');
@@ -2254,7 +2172,6 @@
     return api('/api/inbox/scheduled').then(function (r) {
       $('scheduled').innerHTML = r.items.length ? r.items.map(function (i) {
         // Seconds are noise on something that fires tomorrow morning.
-        // "paused" is a word in the row, not a colour.
         var when = (i.paused ? 'paused · ' : '') + new Date(i.runAfter).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
         var id = esc(i.id);
         return '<li class="stacked"><span class="small">' + esc(i.message.slice(0, 120)) + '</span>' +
@@ -2277,14 +2194,10 @@
     }).catch(function () {});
   }
 
-  // Muted threads and quiet hours are prefs, so the server skips the push for
-  // every device at once. Approvals are never skipped (see deliver()).
   function renderQuiet() {
     api('/api/threads').then(function (r) {
       var names = r.items.map(function (t) { return t.name; });
       if (names.indexOf('main') === -1) names.unshift('main');
-      // A muted thread the server no longer lists still needs a chip, or it
-      // could never be unmuted.
       (prefs.mutedThreads || []).forEach(function (t) { if (names.indexOf(t) === -1) names.push(t); });
       var box = $('mute-threads');
       box.innerHTML = '';
@@ -2303,7 +2216,6 @@
       });
     }).catch(function () {});
     var q = prefs.quietHours;
-    // Not the one being edited: a prefs reload mid-edit would blank it.
     ['from', 'to'].forEach(function (k) { var el = $('quiet-' + k); if (el !== document.activeElement) el.value = q ? q[k] : ''; });
     $('quiet-note').textContent = q
       ? 'No reply notifications from ' + q.from + ' to ' + q.to + ', in this machine\'s time zone (' + ((health && health.timeZone) || '?') + '). Approvals still notify.'
@@ -2313,7 +2225,6 @@
   function setConn(up) {
     var el = $('conn');
     el.className = 'conn ' + (up ? 'up' : 'down');
-    // "live" while the stream is open. A bare "12s" was a reading with no label.
     $('conn-text').textContent = up
       ? (streamOk || !lastContact ? 'live' : 'polled ' + ago(lastContact))
       : 'offline';
@@ -2353,9 +2264,6 @@
   var seen = {};
   var es = null;
   var reconnectTimer = null;
-  // EventSource cannot set a header, so it rides the cookie. A browser that
-  // refuses the cookie never opens the stream; after two failures in a row with
-  // no open in between, fall back to the tokened URL rather than to no stream.
   var streamFails = 0;
   function connectStream() {
     if (!window.EventSource || document.hidden) return;
@@ -2459,9 +2367,6 @@
   // on a phone, one-handed, on a train, is the thing this app is worst at,
   // so they are one tap and they live next to the box they fill.
   function snippets() { return prefs.snippets || LS.get('snippets', ['Status update, two lines', 'Run the tests and summarise failures', 'What changed since my last message?']); }
-  // While true, a tap on a snippet removes it instead of inserting it. A visible
-  // mode replaces long-press, which nobody discovers and touch devices fire
-  // twice (press and menu).
   var snipEdit = false;
   function renderSnips() {
     var box = $('snips');
@@ -2573,8 +2478,6 @@
     });
   }
 
-  // The file goes to uploads/ and the message gets its path, exactly as a share
-  // does. Nothing is sent until Send is pressed.
   var hasAttachment = false;
   $('attach-btn').onclick = function () { $('attach-file').click(); };
   $('attach-file').onchange = function () {
@@ -2718,11 +2621,8 @@
   // Wiring
 
   $('send').onclick = send;
-  // The ResizeObserver on .compose (bottom of the script) already re-measures when
-  // the box changes height; the direct call is only the fallback without one.
   $('msg').addEventListener('input', function () { saveDraft(); growMsg(); if (!window.ResizeObserver) measureBar(); });
   $('msg').addEventListener('keydown', function (e) {
-    // isComposing: Enter that commits an IME candidate must not send.
     if (e.key === 'Enter' && !e.isComposing && !e.shiftKey &&
         (e.metaKey || e.ctrlKey || LS.get('enterSends', false))) {
       e.preventDefault();
@@ -2785,7 +2685,6 @@
     else if (pause || resume) post('/api/inbox/scheduled/pause', { id: pause || resume, paused: !!pause }).then(done(pause ? 'Paused.' : 'Resumed.')).catch(fail);
     else if (now) post('/api/inbox/scheduled/run-now', { id: now }).then(done('Running it now. The schedule is unchanged.')).catch(fail);
   };
-  // Monday first, as a week is read; data-day is Date.getDay()'s number.
   ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach(function (name, i) {
     var b = document.createElement('button');
     b.className = 'snip'; b.textContent = name;
@@ -2826,7 +2725,6 @@
         .catch(function () { btn.disabled = false; btn.textContent = 'Remove failed - tap to retry'; });
     });
   };
-  // Saved only once both ends are set: half a window is not a window.
   $('quiet-from').onchange = $('quiet-to').onchange = function () {
     var from = $('quiet-from').value, to = $('quiet-to').value;
     if (from && to) { savePref('quietHours', { from: from, to: to }); renderQuiet(); }
@@ -2842,8 +2740,6 @@
   $('opt-enter').onchange = function () { LS.set('enterSends', this.checked); syncEnterHint(); };
   syncEnterHint();
 
-  // The same two fields the server searches. Filtering on the reply alone threw
-  // away every result the server had matched on the prompt.
   function matchesQuery(n, q) {
     if (!q) return true;
     var needle = String(q).toLowerCase();
@@ -2851,8 +2747,6 @@
       String(n.prompt || '').toLowerCase().indexOf(needle) !== -1;
   }
 
-  // Wraps matches in <mark> by walking TEXT NODES, never by editing HTML, so a
-  // query can never produce markup.
   function highlight(root, q) {
     if (!q) return;
     var needle = q.toLowerCase();
@@ -2905,7 +2799,6 @@
   $('search').addEventListener('input', function () {
     clearTimeout(searchTimer);
     var q = this.value.trim();
-    // One character matches nearly everything; wait for two, and for a pause.
     searchTimer = setTimeout(function () {
       if (!q) { $('search-note').textContent = ''; repliesKey = null; pollNotifications(); return; }
       if (q.length >= 2) runSearch();
@@ -3009,9 +2902,6 @@
   }
 
   window.addEventListener('online', flushOutbox);
-  // A hidden tab kept five timers and an open stream going for as long as the
-  // phone was in a pocket. A pending approval still reaches it: that is what
-  // the push notification is for.
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
       stopTimers();
@@ -3145,9 +3035,6 @@
     if (document.hidden) return;
     tickElapsed();
     tickAsk();
-    // Stream up: pings arrive every 25 s, so 60 s is two missed pings plus
-    // slack. Stream down: health is polled every 4 s, so 15 s is three missed
-    // polls plus slack.
     if (lastContact) setConn(Date.now() - lastContact < (streamOk ? 60000 : 15000));
   }, 1000);
 })();

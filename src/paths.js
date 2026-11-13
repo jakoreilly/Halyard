@@ -56,7 +56,6 @@ function layout(dataDir) {
     threads: d('threads'),
     artifacts: d('artifacts'),
     uploads: d('uploads'),
-    // One file per finished run: its step list, readable from its reply.
     runsDir: d('runs'),
     // Values the phone hands over outside the chat, and the outbox it collects
     // them from. Its own 0700 directory - see the secrets routes in server.js.

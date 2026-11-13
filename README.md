@@ -115,10 +115,9 @@ screen — it is a PWA, so it gets an icon and behaves like an app.
 | | |
 |---|---|
 | **Send work** | A message goes on a queue and starts immediately. Pick the engine, the model, and which thread it belongs to. |
-| **Watch it happen** | A live activity line, an expandable step-by-step transcript, and the model's own prose as a **draft answer** — so a twenty-minute run reads as answered minutes before it finishes. The steps stay readable afterwards: tap **Steps** on the reply. |
-| **Approve the dangerous parts** | Mutating git, recursive deletes and anything sending data off the machine stop and ask. Answer from the notification without opening anything. A run that pushes ten times can be approved once for the rest of that run (git only, by default). |
-| **Schedule and repeat** | "In an hour", "tomorrow 07:00", "every weekday 08:30", or any days you pick. Pause, resume, or run one now without moving its schedule. Repeats survive restarts and don't drift across daylight saving. |
-| **Keep it quiet** | Mute a thread, or set quiet hours. Replies still arrive on the page; approvals always notify. |
+| **Watch it happen** | A live activity line, an expandable step-by-step transcript, and the model's own prose as a **draft answer** — so a twenty-minute run reads as answered minutes before it finishes. |
+| **Approve the dangerous parts** | Mutating git, recursive deletes and anything sending data off the machine stop and ask. Answer from the notification without opening anything. |
+| **Schedule and repeat** | "In an hour", "tomorrow 07:00", "every weekday 08:30". Repeats survive restarts and don't drift across daylight saving. |
 | **Keep threads** | Each thread owns a real agent session plus a rolling summary, so `work` and `homelab` don't bleed into each other. |
 | **Search everything** | Every reply is archived to disk permanently and searchable, not just the last thirty. |
 | **See what it cost** | Per-run cost and duration, rolled up by day, thread and model. |
@@ -366,7 +365,7 @@ interactive session it is not a backstop, it is an obstacle.
 ## Development
 
 ```sh
-node test/smoke.js     # routes, guards, crypto, parsers — no live install touched
+node test/smoke.js     # 43 checks: routes, guards, crypto, parsers — no live install touched
 node test/e2e.js       # a real server + watcher driving a fake agent CLI
 npm test               # both
 npm run check          # syntax gate, including the page's inline script

@@ -263,7 +263,6 @@ function serverContext(boot, token) {
     pushSubs: () => subs,
     addPushSub: (sub) => {
       const prev = subs.find((s) => s.endpoint === sub.endpoint);
-      // Re-subscribing the same browser must not reset when it was first seen.
       const merged = { ...sub, addedAt: (prev && prev.addedAt) || sub.addedAt || Date.now() };
       subs = subs.filter((s) => s.endpoint !== sub.endpoint).concat(merged);
       writePushSubs(paths, subs);
@@ -406,8 +405,6 @@ async function cmdToken(argv) {
   console.log(argv.flags.url ? `${host}/?token=${token}` : token);
 }
 
-// Creates (or with --revoke, deletes) a token that can only queue a message.
-// Printed once; the file is 0600 in a 0700 directory, like a secret.
 async function cmdInboundToken(argv) {
   const boot = bootstrap(argv);
   const name = require('../src/threads').slug(argv._[1] || '');
@@ -479,8 +476,6 @@ async function cmdHookConfig(argv) {
 //
 // The exit code is the contract, not stdout's mere presence: 0 answered (the
 // answer is the whole of stdout), 3 nobody answered in time, 4
-// unreachable/rejected, 5 the bridge restarted and no longer holds the question,
-// so no answer to it is ever coming.
 async function cmdAsk(argv) {
   const boot = bootstrap(argv);
   const { cfg, paths } = boot;
@@ -504,7 +499,6 @@ async function cmdAsk(argv) {
     : [];
   const waitSec = Number(argv.flags.wait) || 240;
   const client = createClient(cfg, token, { timeoutMs: 10000 });
-  // The long-poll is held up to 25 s by the bridge, so it needs a longer limit.
   const waitClient = createClient(cfg, token, { timeoutMs: 35000 });
 
   let id;
@@ -526,8 +520,6 @@ async function cmdAsk(argv) {
   while (Date.now() < deadline) {
     const asked = Date.now();
     const state = await waitClient.tryGet(`/api/state?id=${encodeURIComponent(id)}&wait=25`);
-    // A bridge that ignored `wait` (or failed fast) answers at once; degrade to
-    // the old 3 s poll rather than spin.
     if (Date.now() - asked < 1000 && (!state || state.status === 'pending')) {
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
