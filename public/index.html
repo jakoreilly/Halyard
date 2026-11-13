@@ -1976,7 +1976,7 @@
 
   function renderConversation() {
     var t = thread();
-    var mine = allReplies.filter(function (n) { return (n.thread || 'main') === t; }).slice(0, 10).reverse();
+    var mine = allReplies.filter(function (n) { return (n.thread || 'main') === t; }).slice(0, 10);
     $('convo-title').textContent = 'conversation · ' + t;
     var box = $('convo');
     box.innerHTML = '';

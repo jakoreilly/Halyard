@@ -1888,6 +1888,12 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.ok(!/innerHTML/.test(fn[0]), 'highlight must work on text nodes only');
   });
 
+  check('page: the conversation lists the newest reply first', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const fn = /function renderConversation\(\) \{[\s\S]*?\n  \}/.exec(html);
+    assert.ok(fn && /\.slice\(0, 10\);/.test(fn[0]) && !/reverse\(\)/.test(fn[0]), 'newest at the top, never reversed');
+  });
+
   check('page: older replies survive a poll, and the approval card shows rule, directory and time left', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
     assert.ok(/renderReplies\(withOlder\(r\.items\)\)/.test(html), 'a poll must not drop paged-in replies');
