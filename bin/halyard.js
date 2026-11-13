@@ -22,6 +22,7 @@ const configmod = require('../src/config');
 const { createLogger } = require('../src/log');
 const { createServer } = require('../src/server');
 const { createClient } = require('../src/client');
+const { writeFileAtomic } = require('../src/atomic');
 const watcher = require('../src/watcher');
 const pushmod = require('../src/push');
 const lockmod = require('../src/lock');
@@ -123,7 +124,7 @@ function readPushSubs(paths) {
 }
 
 function writePushSubs(paths, subs) {
-  try { fs.writeFileSync(paths.pushSubs, JSON.stringify(subs)); } catch (e) { /* best effort */ }
+  try { writeFileAtomic(paths.pushSubs, JSON.stringify(subs)); } catch (e) { /* best effort */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -261,7 +262,9 @@ function serverContext(boot, token) {
     pushKeys: () => keys,
     pushSubs: () => subs,
     addPushSub: (sub) => {
-      subs = subs.filter((s) => s.endpoint !== sub.endpoint).concat(sub);
+      const prev = subs.find((s) => s.endpoint === sub.endpoint);
+      const merged = { ...sub, addedAt: (prev && prev.addedAt) || sub.addedAt || Date.now() };
+      subs = subs.filter((s) => s.endpoint !== sub.endpoint).concat(merged);
       writePushSubs(paths, subs);
     },
     removePushSub: (endpoint) => {
@@ -402,6 +405,31 @@ async function cmdToken(argv) {
   console.log(argv.flags.url ? `${host}/?token=${token}` : token);
 }
 
+async function cmdInboundToken(argv) {
+  const boot = bootstrap(argv);
+  const name = require('../src/threads').slug(argv._[1] || '');
+  if (!name) {
+    console.error('\n  usage: halyard inbound-token <name> [--revoke]\n');
+    process.exitCode = 1;
+    return;
+  }
+  const dir = boot.paths.inbound;
+  const file = path.join(dir, `${name}.token`);
+  if (argv.flags.revoke) {
+    try { fs.unlinkSync(file); console.log(`  inbound token "${name}" revoked`); }
+    catch (e) { console.error(`  no inbound token named "${name}"`); process.exitCode = 1; }
+    return;
+  }
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const t = crypto.randomBytes(24).toString('base64url');
+  fs.writeFileSync(file, t, { mode: 0o600 });
+  const host = boot.cfg.publicUrl || `http://127.0.0.1:${boot.cfg.port}`;
+  console.log(`\n  Inbound token "${name}" - it can queue a message and nothing else.`);
+  console.log(`  Messages land in the thread "${name}", marked as background.\n`);
+  console.log(`  curl -X POST "${host}/api/inbox" -H "Authorization: Bearer ${t}" \\`);
+  console.log(`       -H "content-type: application/json" -d '{"message":"the build on main failed"}'\n`);
+}
+
 // Prints the JSON to paste into the agent's hook configuration. Printed rather
 // than written, because it goes in a file the agent owns and silently editing
 // someone's agent settings is exactly the kind of surprise this project should
@@ -448,10 +476,6 @@ async function cmdHookConfig(argv) {
 //
 // The exit code is the contract, not stdout's mere presence: 0 answered (the
 // answer is the whole of stdout), 3 nobody answered in time, 4
-// unreachable/rejected, 5 the question was replaced by a later one before this
-// one was answered - there is only one slot, and if the run's own next tool
-// call raises a relay approval, that approval takes it and no answer to this
-// question is ever coming.
 async function cmdAsk(argv) {
   const boot = bootstrap(argv);
   const { cfg, paths } = boot;
@@ -475,10 +499,11 @@ async function cmdAsk(argv) {
     : [];
   const waitSec = Number(argv.flags.wait) || 240;
   const client = createClient(cfg, token, { timeoutMs: 10000 });
+  const waitClient = createClient(cfg, token, { timeoutMs: 35000 });
 
   let id;
   try {
-    const res = await client.post('/api/ask', { question, command: '', options });
+    const res = await client.post('/api/ask', { question, command: '', options, timeoutMs: waitSec * 1000 });
     id = res.id;
   } catch (e) {
     console.error(`\n  halyard ask: could not reach the bridge (${e.message})\n`);
@@ -493,11 +518,14 @@ async function cmdAsk(argv) {
   // and process.exitCode do the work is already this file's own pattern.
   const deadline = Date.now() + waitSec * 1000;
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    const state = await client.tryGet('/api/state');
+    const asked = Date.now();
+    const state = await waitClient.tryGet(`/api/state?id=${encodeURIComponent(id)}&wait=25`);
+    if (Date.now() - asked < 1000 && (!state || state.status === 'pending')) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
     if (!state) continue;
-    if (state.id !== id) {
-      console.error('\n  halyard ask: the question was replaced by another one before it was answered\n');
+    if (state.status === 'gone') {
+      console.error('\n  halyard ask: the bridge restarted before the question was answered\n');
       process.exitCode = 5;
       return;
     }
@@ -583,6 +611,7 @@ function usage() {
     halyard watch                 one watcher pass (for cron / systemd timer)
     halyard doctor                what is configured, reachable and risky
     halyard token [--url|--qr]    print the token, the full link, or a QR code to scan
+    halyard inbound-token <name>  a token that can only queue a message [--revoke]
     halyard ask "<question>"      block and ask the phone a genuine question
       [--options "a|b"] [--wait 240]   (for the agent to run mid-turn, not you)
     halyard hook-config           agent hook config for the approve/deny relay
@@ -611,6 +640,7 @@ async function main() {
     watch: cmdWatch,
     doctor: cmdDoctor,
     token: cmdToken,
+    'inbound-token': cmdInboundToken,
     ask: cmdAsk,
     'hook-config': cmdHookConfig,
     'install-service': cmdInstallService,

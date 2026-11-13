@@ -621,6 +621,9 @@ async function main() {
         question: `A headless run wants to run a ${rule.label} (${input.tool_name}). Approve?`,
         command,
         options: ['Approve', 'Deny'],
+        timeoutMs: TIMEOUT_MS,
+        rule: rule.name,
+        cwd: input.cwd || null,
       }),
     });
     if (!askRes.ok) return decide('deny', 'bridge rejected the relay question');
@@ -631,19 +634,22 @@ async function main() {
   }
 
   const deadline = Date.now() + TIMEOUT_MS;
+  let why = 'no phone response within timeout';
   while (Date.now() < deadline) {
-    await sleep(POLL_MS);
+    const asked = Date.now();
     try {
-      const stateRes = await fetch(`${BASE}/api/state?token=${token}`, { signal: AbortSignal.timeout(10000) });
+      const stateRes = await fetch(`${BASE}/api/state?id=${encodeURIComponent(id)}&wait=25&token=${token}`, { signal: AbortSignal.timeout(35000) });
       const state = await stateRes.json();
-      if (state.id === id && state.status === 'answered') {
+      if (state.status === 'answered') {
         return state.answer === 'Approve'
           ? decide('allow', 'approved via phone relay')
           : decide('deny', 'denied via phone relay');
       }
+      if (state.status === 'gone') { why = 'the bridge restarted before this was answered'; break; }
     } catch (e) {
       // transient poll failure, keep trying until deadline
     }
+    if (Date.now() - asked < 1000) await sleep(POLL_MS);
   }
   // Recorded so the phone's "Needs your tap" card can offer it again later; a
   // timed-out push or merge otherwise just disappears. Best-effort, never blocks.
@@ -657,7 +663,7 @@ async function main() {
   } catch (e) {
     // bridge gone: the deny below still stands
   }
-  return decide('deny', 'no phone response within timeout');
+  return decide('deny', why);
 }
 
 // Guarded so test/smoke.js can require this file for MUTATING_GIT without the

@@ -20,7 +20,7 @@
 //      individually with its own catch.
 //   3. SW_VERSION and the page's REQUIRED_SW_VERSION are bumped together.
 
-const SW_VERSION = 4;
+const SW_VERSION = 6;
 const CACHE = `halyard-shell-v${SW_VERSION}`;
 
 // Token-free URLs only. /manifest.json bakes the token into start_url and is
@@ -30,6 +30,8 @@ const SHELL_URLS = ['/icon.svg'];
 // redirects to. Never touched by the activate cleanup below, or a worker update
 // in between would eat a share in flight.
 const SHARE_CACHE = 'halyard-share';
+const PAGE_CACHE = 'halyard-page';
+const PAGE_KEY = '/__shell';
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -42,7 +44,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const names = await caches.keys();
-    await Promise.all(names.filter((n) => n !== CACHE && n !== SHARE_CACHE).map((n) => caches.delete(n)));
+    await Promise.all(names.filter((n) => n !== CACHE && n !== SHARE_CACHE && n !== PAGE_CACHE).map((n) => caches.delete(n)));
     await self.clients.claim();
   })());
 });
@@ -54,9 +56,31 @@ self.addEventListener('activate', (event) => {
 // up into the compose box - nothing is queued until the phone presses Send.
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (url.pathname === '/share' && event.request.method === 'POST') event.respondWith(receiveShare(event.request, url));
+  if (url.pathname === '/share' && event.request.method === 'POST') {
+    event.respondWith(receiveShare(event.request, url));
+    return;
+  }
+  if (event.request.mode === 'navigate' && (url.pathname === '/' || url.pathname === '/index.html')) {
+    event.respondWith(pageNetworkFirst(event.request));
+  }
   // Anything else is not intercepted at all - true network passthrough.
 });
+
+async function pageNetworkFirst(request) {
+  const cache = await caches.open(PAGE_CACHE);
+  try {
+    const res = await Promise.race([
+      fetch(request),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000)),
+    ]);
+    if (res.ok) cache.put(PAGE_KEY, res.clone()).catch(() => {});
+    return res;
+  } catch (e) {
+    const hit = await cache.match(PAGE_KEY);
+    if (hit) return hit;
+    throw e;
+  }
+}
 
 async function receiveShare(request, url) {
   const back = (st) => Response.redirect(`/?token=${encodeURIComponent(url.searchParams.get('token') || '')}&shared=${st}`, 303);
@@ -111,15 +135,17 @@ self.addEventListener('push', (event) => {
   // approval left unanswered still denies on the relay's timeout. Don't go back
   // to two buttons without re-testing on a real Android phone.
   const askOptions = Array.isArray(payload.actions) ? payload.actions.filter(Boolean).slice(0, 1) : [];
-  const actions = payload.kind === 'ask' && askOptions.length
-    ? askOptions.map((label, i) => ({ action: `opt${i}`, title: String(label) }))
-    : [{ action: 'reply', title: 'Reply', type: 'text', placeholder: 'Reply…' }];
+  const actions = payload.review
+    ? []
+    : (payload.kind === 'ask' && askOptions.length
+      ? askOptions.map((label, i) => ({ action: `opt${i}`, title: String(label) }))
+      : [{ action: 'reply', title: 'Reply', type: 'text', placeholder: 'Reply…' }]);
 
   event.waitUntil(self.registration.showNotification(payload.title || 'Halyard', {
     body: payload.body || '',
     icon: '/icon.svg',
     badge: '/icon.svg',
-    tag: payload.kind === 'ask' ? 'halyard-ask' : `halyard-${payload.id || Date.now()}`,
+    tag: payload.kind === 'ask' ? `halyard-ask-${payload.id || Date.now()}` : `halyard-${payload.id || Date.now()}`,
     data: payload,
     // Platforms that support no actions (iOS) ignore this list and still show a
     // tappable notification - exactly the behaviour before actions existed.

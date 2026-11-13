@@ -203,7 +203,7 @@ function copilotJson(line, result) {
 
 function plainText(line, result) {
   result.replyLines.push(String(line));
-  result.reply = result.replyLines.join('\n');
+  result.reply = result.replyLines.length > 1 ? `${result.reply}\n${line}` : String(line);
   return null;
 }
 

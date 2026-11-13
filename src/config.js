@@ -111,6 +111,7 @@ const DEFAULTS = {
   // time, NOT the home directory: an agent running unattended with write access
   // to an entire user profile is a decision someone should make on purpose.
   workspace: '',
+  threadWorkspaces: {},
 
   // Passed straight through to the engine. 'default' means the agent's own
   // permission rules apply. Anything looser is opt-in and `doctor` says so.
@@ -147,6 +148,7 @@ const DEFAULTS = {
     // by default: turn it on only if merging into your own private repos is
     // something you would approve without reading anyway.
     privateMergeWithoutTap: false,
+    runScopedRules: ['git'],
   },
 
   // --- usage guard ---------------------------------------------------------
@@ -157,6 +159,12 @@ const DEFAULTS = {
   // all let the run go ahead. 0 disables it. Only engines that speak
   // claude-json are guarded - the gauges are Anthropic's.
   usageGuard: { maxPercent: 0, announceEveryMs: 30 * 60 * 1000 },
+
+  spendGuard: { dailyUsd: 0, announceEveryMs: 30 * 60 * 1000 },
+
+  watchdog: { staleMs: 10 * 60 * 1000 },
+
+  diff: { enabled: true, maxBytes: 512 * 1024, timeoutMs: 10 * 1000 },
 
   // --- long threads ----------------------------------------------------------
   // A resumed thread resends its whole history every turn, so it gets more
@@ -183,12 +191,14 @@ const DEFAULTS = {
   notificationRing: 30,
   transcriptRing: 200,
   archiveMaxBytes: 4 * 1024 * 1024,
+  archiveSearchFiles: 12,
 
   // --- misc ----------------------------------------------------------------
   // Poll interval for the built-in watcher loop. The server also nudges the
   // watcher the instant a message is queued, so this is only the safety net
   // for a message queued while the loop was busy.
   watchIntervalMs: 60 * 1000,
+  ssePingMs: 25 * 1000,
   logLevel: 'info',
 };
 
@@ -206,6 +216,7 @@ const ENV_MAP = {
   HALYARD_NTFY_TOPIC: ['ntfy.topic', String],
   HALYARD_LOG_LEVEL: ['logLevel', String],
   HALYARD_USAGE_MAX_PERCENT: ['usageGuard.maxPercent', Number],
+  HALYARD_SPEND_DAILY_USD: ['spendGuard.dailyUsd', Number],
   HALYARD_BACKGROUND_MODEL: ['background.model', String],
 };
 
@@ -281,6 +292,9 @@ function load(opts) {
     cfg.defaultEngine = 'claude';
   }
   cfg.port = Number(cfg.port) || DEFAULTS.port;
+  if (cfg.relay && !Array.isArray(cfg.relay.runScopedRules)) {
+    cfg.relay.runScopedRules = typeof cfg.relay.runScopedRules === 'string' ? [cfg.relay.runScopedRules] : [];
+  }
   return cfg;
 }
 
@@ -294,6 +308,13 @@ function containsPath(outer, inner, platform = process.platform) {
   const norm = (s) => (platform === 'win32' ? p.resolve(s).toLowerCase() : p.resolve(s));
   const rel = p.relative(norm(outer), norm(inner));
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${p.sep}`) && !p.isAbsolute(rel));
+}
+
+function workspaceFor(cfg, threadName) {
+  const map = cfg.threadWorkspaces || {};
+  const raw = Object.prototype.hasOwnProperty.call(map, threadName) ? map[threadName] : null;
+  if (typeof raw !== 'string' || !raw.trim()) return cfg.workspace;
+  return path.resolve(raw.replace(/^~(?=$|[/\\])/, os.homedir()));
 }
 
 // Non-fatal advisories, surfaced by `halyard doctor` and on the phone's status
@@ -327,6 +348,23 @@ function audit(cfg) {
       msg: `Workspace is ${cfg.workspace}, which contains your whole home directory. Narrow it unless you mean it.`,
     });
   }
+  const risky = ((cfg.relay && cfg.relay.runScopedRules) || []).filter((r) => r !== 'git');
+  if (risky.length) {
+    out.push({
+      level: 'warn',
+      msg: `relay.runScopedRules includes ${risky.join(', ')}. One tap can then approve every such command for the rest of a run, including ones you never see.`,
+    });
+  }
+  for (const [name, raw] of Object.entries(cfg.threadWorkspaces || {})) {
+    const dir = workspaceFor(cfg, name);
+    if (typeof raw !== 'string' || dir === cfg.workspace) continue;
+    if (!fs.existsSync(dir)) {
+      out.push({ level: 'warn', msg: `Thread "${name}" is mapped to ${dir}, which does not exist. Its runs will fail to start.` });
+    }
+    if (containsPath(dir, os.homedir())) {
+      out.push({ level: 'warn', msg: `Thread "${name}" runs in ${dir}, which contains your whole home directory.` });
+    }
+  }
   const engine = cfg.engines[cfg.defaultEngine];
   if (engine && !engine.supportsRelayHook && cfg.relay && cfg.relay.enabled) {
     out.push({
@@ -346,4 +384,4 @@ function audit(cfg) {
   return out;
 }
 
-module.exports = { DEFAULTS, BUILTIN_ENGINES, ENV_MAP, load, audit, deepMerge, setPath, containsPath };
+module.exports = { DEFAULTS, BUILTIN_ENGINES, ENV_MAP, load, audit, workspaceFor, deepMerge, setPath, containsPath };
