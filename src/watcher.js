@@ -116,6 +116,28 @@ function hookEnv({ cfg, paths, client }) {
   return env;
 }
 
+const PERMISSION_MCP = path.join(__dirname, '..', 'hooks', 'permission-mcp.js');
+
+function permissionPromptArgs({ cfg, engine, paths, env }) {
+  const relay = cfg.relay || {};
+  if (!relay.enabled || relay.permissionPrompts === false || !engine.supportsRelayHook || !paths.root) {
+    return { relayMcpConfig: '', relayPromptTool: '' };
+  }
+  const { SERVER_NAME, TOOL_NAME } = require('../hooks/permission-mcp');
+  const file = path.join(paths.root, 'permission-mcp.json');
+  const body = {
+    mcpServers: {
+      [SERVER_NAME]: { type: 'stdio', command: process.execPath, args: [PERMISSION_MCP], env },
+    },
+  };
+  try {
+    fs.writeFileSync(file, JSON.stringify(body, null, 2));
+  } catch (e) {
+    return { relayMcpConfig: '', relayPromptTool: '' };
+  }
+  return { relayMcpConfig: file, relayPromptTool: `mcp__${SERVER_NAME}__${TOOL_NAME}` };
+}
+
 // Resolves when the agent is finished AND we have stopped waiting for its
 // pipes - whichever of those comes first, subject to the bounds above.
 function runAgent(opts) {
@@ -303,7 +325,7 @@ function buildPrompt({ item, thread, engine, cfg, secretsDir, routingNote, works
     `Working directory: ${workspace || cfg.workspace}`,
     `Permission mode: ${cfg.permissionMode}`,
     cfg.relay && cfg.relay.enabled && engine.supportsRelayHook
-      ? 'Mutating git commands, recursive deletes and outbound network calls are relayed to the phone for an approve/deny tap before they run. Use them normally; expect one pause.'
+      ? `Mutating git commands, recursive deletes and outbound network calls are relayed to the phone for an approve/deny tap before they run.${cfg.relay.permissionPrompts === false ? '' : ' So is anything else that needs permission, such as a shell command outside the allow list.'} Use them normally; expect one pause.`
       : 'There is no approve/deny relay on this engine. Be conservative with anything destructive or outbound.',
     // Only the directory, never a list of names or values: the model is told
     // where to look, and looks only when a message needs a credential.
@@ -508,12 +530,14 @@ async function processOne(ctx, item) {
       ].filter(Boolean).join('\n');
       return result;
     }
+    const env = hookEnv({ cfg, paths, client });
     const args = buildArgs(engine.args, {
       workspace,
       secrets: paths.secrets,
       permissionMode: cfg.permissionMode,
       model: (engine.modelMap && engine.modelMap[modelKey]) || modelKey || '',
       session: sessionId || '',
+      ...permissionPromptArgs({ cfg, engine, paths, env }),
     });
     log.info(`run ${runId}: ${resolved.command} ${args.join(' ')}`, { thread: thread.name, engine: engineName });
     return runAgent({
@@ -525,7 +549,7 @@ async function processOne(ctx, item) {
       result,
       postExitTimeoutMs: cfg.postExitTimeoutMs,
       runTimeoutMs: cfg.runTimeoutMs,
-      env: hookEnv({ cfg, paths, client }),
+      env,
       log,
       onActivity: sendActivity,
       isKillRequested: async () => {
@@ -876,5 +900,5 @@ function startLoop(ctx) {
 
 module.exports = {
   runOnce, startLoop, runAgent, buildArgs, buildPrompt, splitHandover, changeFooter, decideReroute, CAPACITY_OR_AUTH,
-  hookEnv, postWithRetry, longThread, usageHeld, spendHeld, activitySender, gitOut, diffHtml, writeDiff,
+  hookEnv, permissionPromptArgs, postWithRetry, longThread, usageHeld, spendHeld, activitySender, gitOut, diffHtml, writeDiff,
 };

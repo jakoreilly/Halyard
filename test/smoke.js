@@ -524,6 +524,41 @@ check('the agent is told where secrets live, and given the directory', () => {
   assert.ok(/never print/i.test(prompt));
   const args = buildArgs(cfg.engines.claude.args, { workspace: '/w', secrets: '/data/secrets', permissionMode: 'default' });
   assert.ok(args.join(' ').includes('--add-dir /data/secrets'), 'claude gets the secrets directory in scope');
+  assert.ok(!args.includes('--mcp-config') && !args.includes('--permission-prompt-tool'), 'no prompt tool, no dangling flags');
+});
+
+check('permission prompts: claude is pointed at the phone prompt tool, and only when the relay is on', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-pp-'));
+  try {
+    const cfg = configmod.load({ file: null, env: {}, cli: { workspace: '/w' } });
+    const env = { HALYARD_DATA_DIR: dir, HALYARD_PORT: '5123' };
+    const pp = watcher.permissionPromptArgs({ cfg, engine: cfg.engines.claude, paths: { root: dir }, env });
+    assert.strictEqual(pp.relayPromptTool, 'mcp__halyard_relay__approve');
+    const written = JSON.parse(fs.readFileSync(pp.relayMcpConfig, 'utf8'));
+    const server = written.mcpServers.halyard_relay;
+    assert.strictEqual(server.command, process.execPath);
+    assert.ok(server.args[0].endsWith(path.join('hooks', 'permission-mcp.js')));
+    assert.deepStrictEqual(server.env, env);
+    const args = watcher.buildArgs(cfg.engines.claude.args, { workspace: '/w', permissionMode: 'acceptEdits', ...pp });
+    assert.strictEqual(args[args.indexOf('--permission-prompt-tool') + 1], 'mcp__halyard_relay__approve');
+    assert.strictEqual(args[args.indexOf('--mcp-config') + 1], pp.relayMcpConfig);
+
+    const off = configmod.load({ file: null, env: {}, cli: { workspace: '/w', relay: { enabled: false } } });
+    assert.deepStrictEqual(watcher.permissionPromptArgs({ cfg: off, engine: off.engines.claude, paths: { root: dir }, env }), { relayMcpConfig: '', relayPromptTool: '' });
+    const optOut = configmod.load({ file: null, env: {}, cli: { workspace: '/w', relay: { permissionPrompts: false } } });
+    assert.strictEqual(watcher.permissionPromptArgs({ cfg: optOut, engine: optOut.engines.claude, paths: { root: dir }, env }).relayPromptTool, '');
+    assert.strictEqual(watcher.permissionPromptArgs({ cfg, engine: cfg.engines.copilot, paths: { root: dir }, env }).relayPromptTool, '', 'no relay hook, no prompt tool');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+check('permission prompts: the phone sees the part of the call a person judges it by', () => {
+  const mcp = require('../hooks/permission-mcp.js');
+  assert.strictEqual(mcp.describe('Bash', { command: 'node test/smoke.js' }), 'node test/smoke.js');
+  assert.strictEqual(mcp.describe('Read', { file_path: 'C:\\x\\settings.json' }), 'Read C:\\x\\settings.json');
+  assert.strictEqual(mcp.describe('Grep', { pattern: 'foo', path: '/r' }), 'Grep foo in /r');
+  assert.strictEqual(mcp.describe('Other', { a: 1 }), 'Other {"a":1}');
 });
 
 // ---------------------------------------------------------------------------
@@ -581,6 +616,64 @@ async function withServer(fn, opts = {}) {
 }
 
 async function main() {
+  await checkAsync('permission prompts: the MCP server speaks the protocol and returns the phone\'s answer', async () => {
+    const mcp = require('../hooks/permission-mcp.js');
+    const init = await mcp.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } });
+    assert.strictEqual(init.result.protocolVersion, '2025-06-18');
+    assert.ok(init.result.capabilities.tools);
+    assert.strictEqual(await mcp.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null, 'a notification gets no reply');
+    const list = await mcp.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    assert.deepStrictEqual(list.result.tools.map((t) => t.name), ['approve']);
+
+    const asked = [];
+    const approve = async (q) => { asked.push(q); return { allow: true, reason: 'approved via phone relay' }; };
+    const call = (args, ask) => mcp.handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'approve', arguments: args } }, ask)
+      .then((r) => JSON.parse(r.result.content[0].text));
+    const yes = await call({ tool_name: 'Bash', input: { command: 'git status' }, tool_use_id: 't1' }, approve);
+    assert.deepStrictEqual(yes, { behavior: 'allow', updatedInput: { command: 'git status' } });
+    assert.strictEqual(asked[0].command, 'git status');
+    assert.strictEqual(asked[0].rule, 'permission');
+    assert.ok(asked[0].missedLabel, 'a missed shell command can be re-run later');
+
+    const no = await call({ tool_name: 'Read', input: { file_path: '/x' } }, async (q) => { asked.push(q); return { allow: false, reason: 'denied via phone relay' }; });
+    assert.deepStrictEqual(no, { behavior: 'deny', message: 'denied via phone relay' });
+    assert.strictEqual(asked[1].missedLabel, null, 'a missed read has nothing to re-run');
+
+    const broken = await call({ tool_name: 'Bash', input: { command: 'x' } }, async () => { throw new Error('boom'); });
+    assert.strictEqual(broken.behavior, 'deny', 'an error is a deny, never an allow');
+    const unknown = await mcp.handle({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'other', arguments: {} } });
+    assert.ok(unknown.error);
+  });
+
+  await checkAsync('permission prompts: a prompt reaches the phone as an ordinary approve/deny question', () => withServer(async ({ call, base, token, paths, cfg }) => {
+    fs.writeFileSync(path.join(paths.root, 'token.txt'), token);
+    const env = watcher.hookEnv({ cfg, paths, client: { base } });
+    const child = require('child_process').spawn(process.execPath, [path.join(__dirname, '..', 'hooks', 'permission-mcp.js')], {
+      env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'inherit'],
+    });
+    try {
+      const lines = [];
+      child.stdout.on('data', (d) => lines.push(...String(d).split('\n').filter(Boolean)));
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'approve', arguments: { tool_name: 'Bash', input: { command: 'node test/smoke.js' } } } })}\n`);
+      let ask;
+      for (let i = 0; i < 50 && !ask; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        const s = (await call('GET', '/api/state')).body;
+        if (s.status === 'pending') ask = s;
+      }
+      assert.ok(ask, 'the question shows up for the phone');
+      assert.strictEqual(ask.command, 'node test/smoke.js');
+      assert.strictEqual(ask.rule, 'permission');
+      await call('POST', '/api/answer', { id: ask.id, answer: 'Approve' });
+      for (let i = 0; i < 50 && !lines.length; i++) await new Promise((r) => setTimeout(r, 100));
+      const res = JSON.parse(lines[0]);
+      assert.strictEqual(res.id, 7);
+      assert.strictEqual(JSON.parse(res.result.content[0].text).behavior, 'allow');
+    } finally {
+      child.kill();
+    }
+  }));
+
   await checkAsync('artifacts: scriptable types are sandboxed, and a navigation loses its token', () => withServer(async ({ base, token, paths }) => {
     fs.writeFileSync(path.join(paths.artifacts, 'r.html'), '<html><body><script>1</script></body></html>');
     fs.writeFileSync(path.join(paths.artifacts, 'd.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
