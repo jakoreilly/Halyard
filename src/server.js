@@ -1268,7 +1268,18 @@ ${ask.command}`;
       return p && typeof p === 'object' && !Array.isArray(p) ? p : {};
     } catch (e) { return {}; }
   }
+  const REACTION_EMOJI = ['\u{1F44D}', '❤️', '\u{1F602}', '\u{1F44E}'];
   const PREF_CLAMPS = {
+    reactions: (v) => {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined;
+      const out = {};
+      for (const id of Object.keys(v).slice(0, 400)) {
+        const r = v[id];
+        if (r && REACTION_EMOJI.includes(r.emoji)) out[clampStr(id, 64)] = { emoji: r.emoji, at: Number(r.at) || 0 };
+      }
+      const keep = Object.keys(out).sort((a, b) => out[b].at - out[a].at).slice(0, 200);
+      return Object.fromEntries(keep.map((k) => [k, out[k]]));
+    },
     snippets: (v) => (Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim()).map((s) => clampStr(s, 120)).slice(-12) : undefined),
     pins: (v) => (Array.isArray(v) ? v.filter((p) => p && typeof p.id === 'string').slice(0, 50).map((p) => ({
       id: clampStr(p.id, 64), at: Number(p.at) || 0, thread: threads.normalize(p.thread),
