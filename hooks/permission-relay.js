@@ -601,7 +601,27 @@ async function main() {
   if (!rule) return passthrough();
   if (privateMergePasses(rule, command, ctx, input.cwd)) return passthrough();
 
-  const token = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+  // Names what kind of thing it is, not just that something wants to run.
+  // "a recursive delete" and "a git command" deserve different amounts of
+  // thought from whoever is looking at the phone, and the command itself is
+  // shown underneath either way.
+  const answer = await askPhone({
+    question: `A headless run wants to run a ${rule.label} (${input.tool_name}). Approve?`,
+    command,
+    rule: rule.name,
+    cwd: input.cwd || null,
+    missedLabel: rule.label,
+  });
+  return decide(answer.allow ? 'allow' : 'deny', answer.reason);
+}
+
+async function askPhone({ question, command, rule, cwd, missedLabel }) {
+  let token;
+  try {
+    token = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+  } catch (e) {
+    return { allow: false, reason: 'Halyard token missing' };
+  }
 
   let id;
   try {
@@ -609,28 +629,24 @@ async function main() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // A socket that connects and then goes silent (server wedged on the run
-      // lock) must not hang this hook past the point where a decision is
-      // emitted - the loop's TIMEOUT_MS only bounds the poll condition, not a
-      // single stuck request.
+      // lock) must not hang past the point where a decision is emitted - the
+      // loop's TIMEOUT_MS only bounds the poll condition, not a single stuck
+      // request.
       signal: AbortSignal.timeout(10000),
       body: JSON.stringify({
-        // Names what kind of thing it is, not just that something wants to run.
-        // "a recursive delete" and "a git command" deserve different amounts of
-        // thought from whoever is looking at the phone, and the command itself is
-        // shown underneath either way.
-        question: `A headless run wants to run a ${rule.label} (${input.tool_name}). Approve?`,
+        question,
         command,
         options: ['Approve', 'Deny'],
         timeoutMs: TIMEOUT_MS,
-        rule: rule.name,
-        cwd: input.cwd || null,
+        rule,
+        cwd: cwd || null,
       }),
     });
-    if (!askRes.ok) return decide('deny', 'bridge rejected the relay question');
+    if (!askRes.ok) return { allow: false, reason: 'bridge rejected the relay question' };
     const askBody = await askRes.json();
     id = askBody.id;
   } catch (e) {
-    return decide('deny', 'Halyard unreachable');
+    return { allow: false, reason: 'Halyard unreachable' };
   }
 
   const deadline = Date.now() + TIMEOUT_MS;
@@ -642,8 +658,8 @@ async function main() {
       const state = await stateRes.json();
       if (state.status === 'answered') {
         return state.answer === 'Approve'
-          ? decide('allow', 'approved via phone relay')
-          : decide('deny', 'denied via phone relay');
+          ? { allow: true, reason: 'approved via phone relay' }
+          : { allow: false, reason: 'denied via phone relay' };
       }
       if (state.status === 'gone') { why = 'the bridge restarted before this was answered'; break; }
     } catch (e) {
@@ -653,17 +669,19 @@ async function main() {
   }
   // Recorded so the phone's "Needs your tap" card can offer it again later; a
   // timed-out push or merge otherwise just disappears. Best-effort, never blocks.
-  try {
-    await fetch(`${BASE}/api/ask/missed?token=${token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, command, cwd: input.cwd || null, question: rule.label }),
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch (e) {
-    // bridge gone: the deny below still stands
+  if (missedLabel) {
+    try {
+      await fetch(`${BASE}/api/ask/missed?token=${token}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, command, cwd: cwd || null, question: missedLabel }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (e) {
+      // bridge gone: the deny still stands
+    }
   }
-  return decide('deny', why);
+  return { allow: false, reason: why };
 }
 
 // Guarded so test/smoke.js can require this file for MUTATING_GIT without the
@@ -679,4 +697,5 @@ module.exports = {
   FETCH_TOOLS, TAINT_TOOLS, isLocalHost, outboundHosts, isSecretEgress, isDataBearingUrl,
   taintSource, readsSecret, matchTaintRule, readTaint, updateTaint, TAINT_DIR,
   privateMergeTarget, isPrivateRepoMerge, privateMergePasses,
+  askPhone,
 };
