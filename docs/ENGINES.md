@@ -131,6 +131,17 @@ resolving, set `staleSessionError` to a distinctive substring the CLI writes to 
 that case — the watcher detects exactly that, drops the id, and retakes the turn as a fresh
 session rather than reporting a failure your phone cannot act on.
 
+## A saved login token
+
+`loginToken: { file, env }` names a file in Halyard's `secrets/` folder and the
+environment variable its contents go into, for that engine's runs only. The built-in
+`claude` engine reads `secrets/claude-oauth-token` into `CLAUDE_CODE_OAUTH_TOKEN`: save the
+output of `claude setup-token` there from the phone's Secrets page, and runs no longer
+depend on the interactive login lapsing. A missing or empty file means the CLI's own
+login. If the API refuses the saved token, the run is retried once on the CLI's own login
+and the run box says to replace the file. The `env-dump` relay rule asks the phone
+before a run prints its environment, because the token is in it.
+
 ## The relay flag
 
 `supportsRelayHook` says whether the CLI has a pre-tool hook Halyard's approve/deny relay

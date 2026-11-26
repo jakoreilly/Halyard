@@ -396,6 +396,43 @@ function matchTaintRule(toolName, command, ctx = {}, env = process.env) {
   return { name: hit.name, label: typeof hit.label === 'function' ? hit.label(ctx) : hit.label };
 }
 
+// Printing the environment. A run's environment carries CLAUDE_CODE_OAUTH_TOKEN when
+// a `claude setup-token` login is saved, and every Bash/PowerShell child inherits it, so `printenv`,
+// a bare `env`, `$env:...TOKEN` or /proc/<pid>/environ would put a year-long login
+// into the reply, the log and the thread file. The CLI does not scrub tool
+// subprocesses unless CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is set, and that also forces
+// the default permission mode, which a headless run cannot answer. Reading ONE
+// harmless variable ($HOME, $env:PATH) stays free: only whole-environment dumps and
+// names that look like credentials relay. This is a tripwire, not a boundary: an
+// interpreter can always reach the environment some way no pattern lists. Like the
+// git rules it matches eagerly, quoted text included, because `bash -c "env"` is
+// quoted and still runs.
+// What may sit just before a bare `env`/`set`/`export`: start of line, a shell
+// separator, a quote, a backtick, or whitespace after a command (`sh -c env`).
+// Not a word character, dot, slash, = or -, so `npm run env-check`, `./env` and
+// `FOO=env` stay free.
+const ENV_LEAD = String.raw`(?<![\w./=-])`;
+const ENV_TAIL = String.raw`\s*(?:$|[;&|)>"'` + '`' + String.raw`])`;
+const ENV_DUMP_ANYCASE = new RegExp([
+  String.raw`(?<![\w-])printenv\b`,
+  ENV_LEAD + String.raw`env(?:\s+-[0-9A-Za-z-]+)*` + ENV_TAIL,
+  ENV_LEAD + String.raw`(?:set|export(?:\s+-p)?|declare\s+-[pxg]+|typeset\s+-[px]+|compgen\s+-[ve])` + ENV_TAIL,
+  String.raw`\bcmd(?:\.exe)?\s+\/c\s+["']?set\b`,
+  String.raw`\/proc\/[^\s/]+\/environ\b`,
+  String.raw`\b(?:Get-ChildItem|gci|dir|ls|Get-Item|gi|Get-Content|gc|Get-Variable)\s+env:`,
+  String.raw`\[(?:System\.)?Environment\]::GetEnvironmentVariables?\b`,
+  // PowerShell: only the env: drive counts. A plain $token is an ordinary variable.
+  String.raw`\$\{?env:\w*(?:OAUTH|TOKEN|API_?KEY|SECRET|PASSWORD|PASSWD)`,
+  String.raw`\bprocess\.env\b(?!\s*\.\s*(?!\w*(?:OAUTH|TOKEN|KEY|SECRET))\w)`,
+  String.raw`\bos\.environ\b(?!\s*(?:\.get\(|\[)\s*['"](?!\w*(?:OAUTH|TOKEN|KEY|SECRET))\w)`,
+].join('|'), 'i');
+// Case-sensitive on purpose. Shell variables: upper-case credential names only, so
+// $CLAUDE_CODE_OAUTH_TOKEN relays and a local $token or $apiKey does not. Then awk's
+// ENVIRON, Perl's %ENV and Ruby's ENV, which in lower case are ordinary words
+// (os.environ.get('HOME') must stay free).
+const ENV_CRED_NAME = /\$\{?[A-Z0-9_]*(?:OAUTH|TOKEN|API_?KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*\b|\bENVIRON\b|%ENV\b|\bruby\b[^;&|]*\bENV\b/;
+const ENV_DUMP = { test: (cmd) => ENV_DUMP_ANYCASE.test(cmd) || ENV_CRED_NAME.test(cmd) };
+
 // Ordered because the first match names the question the phone is asked. Each rule
 // carries the noun that goes into that question - "a git command" and "a recursive
 // delete" want different amounts of thought from whoever is holding the phone.
@@ -404,6 +441,7 @@ function matchTaintRule(toolName, command, ctx = {}, env = process.env) {
 const RELAY_RULES = [
   { name: 'git', label: 'git command', test: (cmd) => isRiskyGit(cmd) },
   { name: 'destructive-fs', label: 'recursive delete', test: (cmd) => DESTRUCTIVE_FS.test(cmd) },
+  { name: 'env-dump', label: 'command that prints environment variables (the saved login token is one)', test: (cmd) => ENV_DUMP.test(cmd) },
   { name: 'network-egress', label: 'command that sends data off this machine', test: (cmd) => NETWORK_EGRESS.test(cmd) && !isLoopbackOnly(cmd) },
   { name: 'secret-egress', label: 'command that reads a secret and talks to the network', test: () => false },
   { name: 'tainted-egress', label: 'network request after this run read untrusted content', test: () => false },
@@ -691,7 +729,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  MUTATING_GIT, RISKY_GIT, isRiskyGit, DESTRUCTIVE_FS, NETWORK_EGRESS, RELAY_RULES,
+  MUTATING_GIT, RISKY_GIT, isRiskyGit, DESTRUCTIVE_FS, NETWORK_EGRESS, ENV_DUMP, RELAY_RULES,
   RELAYED_TOOLS, ATTENDED_MODES, shouldRelay, matchRelayRule, isLoopbackOnly, isUnattended,
   enabledRules, baseUrl,
   FETCH_TOOLS, TAINT_TOOLS, isLocalHost, outboundHosts, isSecretEgress, isDataBearingUrl,

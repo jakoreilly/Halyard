@@ -21,7 +21,7 @@
   "relay": {
     "enabled": true,
     "timeoutMs": 300000,
-    "rules": ["git", "destructive-fs", "network-egress", "secret-egress", "tainted-egress"],
+    "rules": ["git", "destructive-fs", "env-dump", "network-egress", "secret-egress", "tainted-egress"],
     "privateMergeWithoutTap": false
   },
 

@@ -412,6 +412,34 @@ function changeFooter(result) {
 // `result.timedOut` before ever reaching this function.
 const CAPACITY_OR_AUTH = /rate.?limit|usage limit|quota|too many requests|\b429\b|\b401\b|unauthorized|authentication|billing/i;
 
+// The engine's saved login token as { NAME: value }, or {} when the engine has
+// none configured or the file is missing or empty. Only an engine that declares
+// `loginToken` gets one, so another CLI never inherits a Claude login.
+function loginEnv(engine, secretsDir) {
+  const lt = engine && engine.loginToken;
+  if (!lt || !lt.file || !lt.env || !secretsDir) return {};
+  try {
+    const value = fs.readFileSync(path.join(secretsDir, path.basename(String(lt.file))), 'utf8').trim();
+    return value ? { [lt.env]: value } : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+// True when a run failed because the login was refused (an expired, revoked or
+// mistyped setup-token) rather than for any other reason. A refused login fails
+// before the model takes a turn, so a run past its first turn did authenticate:
+// retrying it would throw away real work because the reply happened to quote
+// "401 Unauthorized". The reply is read only while short - the CLI's auth
+// message is one line, a real answer is not.
+const AUTH_REFUSED = /authentication_error|invalid (?:api key|bearer token)|oauth token (?:has expired|is invalid|was revoked)|token has been revoked|please run \/login|\b401\b[^\n]{0,40}(?:unauthori[sz]ed|authentication)/i;
+function isAuthFailure(result) {
+  if (!result || result.exitCode === 0 || result.killed || result.timedOut) return false;
+  if (result.numTurns != null && result.numTurns > 1) return false;
+  const reply = String(result.reply || '');
+  return AUTH_REFUSED.test(`${result.stderr || ''}\n${reply.length > 400 ? '' : reply}`);
+}
+
 function decideReroute({ item, cfg, engineName, result }) {
   const f = cfg.failover;
   if (!f || !f.enabled || !f.to || f.to === engineName || !cfg.engines[f.to]) return null;
@@ -519,6 +547,10 @@ async function processOne(ctx, item) {
   // why" is an answer it can act on - an unhandled rejection is not.
   const resolved = resolveCommand(engine.command);
 
+  // Read once per run. Kept out of hookEnv on purpose: that env is also written
+  // into permission-mcp.json on disk, and the token must not be.
+  let login = loginEnv(engine, paths.secrets);
+
   const sendActivity = activitySender((body) => client.tryPost('/api/run/activity', { runId, engine: engineName, ...body }));
 
   const runWith = async (sessionId) => {
@@ -549,7 +581,7 @@ async function processOne(ctx, item) {
       result,
       postExitTimeoutMs: cfg.postExitTimeoutMs,
       runTimeoutMs: cfg.runTimeoutMs,
-      env,
+      env: { ...env, ...login },
       log,
       onActivity: sendActivity,
       isKillRequested: async () => {
@@ -575,8 +607,24 @@ async function processOne(ctx, item) {
   ) {
     log.warn(`session ${thread.session} is gone; retaking the turn fresh`);
     threads.clearSession(paths, thread.name);
+    // Forget the dead id here too, so the login retry and the escalation below
+    // do not resume it again and hit the same error with nothing left to catch it.
+    thread.session = '';
     Object.assign(result, newResult());
     await runWith('');
+  }
+
+  // A saved login token the API refuses would fail every run until someone
+  // deletes the file on the machine. Retry once on the CLI's own stored login
+  // and say so in the run box, the same shape as the session retry above.
+  if (Object.keys(login).length && isAuthFailure(result)) {
+    log.warn(`run ${runId}: the saved login token was refused; retrying on the stored login`);
+    login = {};
+    client.tryPost('/api/run/activity', {
+      runId, engine: engineName, activity: `saved login token refused, using the stored login - replace secrets/${path.basename(String(engine.loginToken.file))}`,
+    });
+    Object.assign(result, newResult());
+    await runWith(thread.session);
   }
 
   // Auto escalation: the light turn answered only "ESCALATE: <reason>", so the
@@ -899,6 +947,6 @@ function startLoop(ctx) {
 }
 
 module.exports = {
-  runOnce, startLoop, runAgent, buildArgs, buildPrompt, splitHandover, changeFooter, decideReroute, CAPACITY_OR_AUTH,
+  runOnce, startLoop, runAgent, buildArgs, buildPrompt, splitHandover, changeFooter, decideReroute, CAPACITY_OR_AUTH, loginEnv, isAuthFailure,
   hookEnv, permissionPromptArgs, postWithRetry, longThread, usageHeld, spendHeld, activitySender, gitOut, diffHtml, writeDiff,
 };

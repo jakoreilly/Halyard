@@ -70,7 +70,7 @@ returns.
 |---|---|---|
 | `relay.enabled` | `true` | Disabling it prints a warning naming what becomes unsupervised. |
 | `relay.timeoutMs` | `300000` | No answer inside this window is a **deny**. |
-| `relay.rules` | all five | `git`, `destructive-fs`, `network-egress`, `secret-egress`, `tainted-egress` (see [SECURITY.md](../SECURITY.md#what-it-matches)). Trim if a category is pure noise for you. An **empty or unset** list means all of them, never none. A config file written before the last two existed lists only three, and so leaves them off - add them. |
+| `relay.rules` | all six | `git`, `destructive-fs`, `env-dump`, `network-egress`, `secret-egress`, `tainted-egress` (see [SECURITY.md](../SECURITY.md#what-it-matches)). Trim if a category is pure noise for you. An **empty or unset** list means all of them, never none. A config file that lists rules explicitly and was written before a family existed leaves that family off - add `env-dump` (new in this release) and any others it is missing. |
 | `relay.privateMergeWithoutTap` | `false` | `gh pr merge` on a repo GitHub reports as **PRIVATE** passes with no tap. Only a lone `gh pr merge` (optionally after one `cd <dir> &&`) qualifies, never in a run that has read untrusted content, and anything but a clean `PRIVATE` answer from `gh repo view` relays as usual. Public repos always relay. |
 
 The hooks run inside the agent's process, not inside Halyard, so the watcher hands them this
@@ -192,7 +192,7 @@ CLI nobody can read.
   "workspace": "/home/you/code/api",
   "defaultEngine": "claude",
   "permissionMode": "default",
-  "relay": { "enabled": true, "rules": ["git", "destructive-fs", "network-egress", "secret-egress", "tainted-egress"] },
+  "relay": { "enabled": true, "rules": ["git", "destructive-fs", "env-dump", "network-egress", "secret-egress", "tainted-egress"] },
   "push": { "enabled": true, "subject": "mailto:you@example.com" }
 }
 ```
@@ -208,7 +208,7 @@ additionally stop and ask your phone.
   "workspace": "/home/you/code",
   "permissionMode": "bypassPermissions",
   "runTimeoutMs": 3600000,
-  "relay": { "enabled": true, "rules": ["git", "destructive-fs", "network-egress", "secret-egress", "tainted-egress"] },
+  "relay": { "enabled": true, "rules": ["git", "destructive-fs", "env-dump", "network-egress", "secret-egress", "tainted-egress"] },
   "push": { "enabled": true, "subject": "mailto:you@example.com" }
 }
 ```

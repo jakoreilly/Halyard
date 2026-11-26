@@ -24,6 +24,10 @@ const lockmod = require('./lock');
 const usagemod = require('./usage');
 const { writeFileAtomic } = require('./atomic');
 const archive = require('./archive');
+const quickRoute = require('./quick-route');
+
+// Run again's own thread: a fresh session per re-run instead of resuming main.
+const RERUN_THREAD = 'reruns';
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const BOOT_ID = crypto.randomBytes(4).toString('hex');
@@ -554,6 +558,27 @@ function createServer(ctx) {
       if (existing) return json(res, 200, { ok: true, id: existing.itemId, queued: state.inbox.length });
     }
 
+    // A bare "status?" is answered here, with no agent run - see src/quick-route.js
+    // for exactly what matches and why so narrowly. A scheduled, repeating or
+    // attachment-carrying message always goes to the agent.
+    const quick = !body.runAfter && !body.repeat && body.attachment !== true ? quickRoute.match(message) : null;
+    if (quick) {
+      const entry = {
+        id: newId(), at: Date.now(), message: statusReply(), thread: threads.normalize(body.thread),
+        prompt: clampStr(message, 4000), kind: 'reply', quick: quick.kind,
+        costUsd: null, durationMs: null, numTurns: null, runId: null,
+      };
+      addNotification(entry);
+      writeMessageLog(entry);
+      if (clientId) {
+        state.recentClients.push({ clientId, itemId: entry.id, at: Date.now() });
+        state.recentClients = state.recentClients.slice(-200);
+        saveState();
+      }
+      log.info(`quick route (${quick.kind}): ${message.slice(0, 120)}`);
+      return json(res, 200, { ok: true, id: entry.id, quick: quick.kind, queued: state.inbox.filter((i) => isDue(i)).length });
+    }
+
     const item = {
       id: newId(),
       at: Date.now(),
@@ -587,6 +612,25 @@ function createServer(ctx) {
     ctx.nudge();
     return json(res, 200, { ok: true, id: item.id, queued: state.inbox.length });
   });
+
+  function statusReply(now = Date.now()) {
+    const lines = [];
+    const r = state.activeRun;
+    if (r) {
+      const mins = Math.max(1, Math.round((now - (r.startedAt || now)) / 60000));
+      const what = r.message ? `: "${String(r.message).replace(/\s+/g, ' ').slice(0, 80)}"` : '';
+      lines.push(`**A run is going** (${r.engine || 'agent'}, ${mins} min)${what}.`);
+      if (r.activity) lines.push(`Last step: ${String(r.activity).slice(0, 120)}`);
+    } else {
+      lines.push('**No run going right now.**');
+    }
+    const queued = state.inbox.filter((i) => isDue(i, now)).length;
+    const scheduled = state.inbox.length - queued;
+    if (queued || scheduled) lines.push(`${queued} queued, ${scheduled} scheduled.`);
+    if (state.lastFailed) lines.push('The last run failed; Retry is on the page.');
+    lines.push('_Answered without a run. Ask with more words (e.g. "any update on the deploy?") to get the agent._');
+    return lines.join('\n');
+  }
 
   route('GET', '/api/inbox', async (req, res) => json(res, 200, { items: state.inbox, lastFailed: state.lastFailed }));
 
@@ -822,13 +866,20 @@ ${ask.command}`;
       at: Date.now(),
       message: `Re-run a command whose approval timed out (${new Date(m.missedAt).toISOString()}). It will ask the phone to approve again; the phone is here now.\n`
         + `In ${m.cwd || 'the directory it names'}, run exactly this once, unchanged:\n\n${m.command}\n\n`
-        + 'Then reply in one or two lines with the result. If it is denied or fails, say so and stop - do not retry or work around it.',
-      thread: threads.DEFAULT_THREAD,
+        + 'Then reply in one or two lines with the result. If it is denied or fails, say so and stop - do not retry or work around it.'
+        + ' Then write HANDOVER: none.',
+      thread: RERUN_THREAD,
       engine: cfg.defaultEngine,
-      model: '',
+      // Resuming the main thread to run one command reloaded its whole transcript
+      // on every Run again (about $2.35 each on the bridge Halyard grew out
+      // of, 63 in 30 days). A fresh session on its own thread, on the engine's
+      // small model where it has one, does the same job. Still an agent run, so
+      // the relay still asks the phone.
+      model: (cfg.engines[cfg.defaultEngine] && cfg.engines[cfg.defaultEngine].modelMap || {}).haiku ? 'haiku' : '',
       runAfter: null,
       repeat: null,
     };
+    threads.clearSession(paths, RERUN_THREAD);
     state.inbox.unshift(item);
     saveState();
     ctx.nudge();

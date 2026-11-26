@@ -22,7 +22,7 @@ Self-hosted, zero dependencies, no open ports, runs on Windows, macOS and Linux.
 
 You need a computer with [Claude Code](https://docs.claude.com/en/docs/claude-code) on it and a phone. About ten minutes.
 
-1. **Install Node.js** from [nodejs.org](https://nodejs.org) (the LTS button), and **sign in to Claude Code** once: open a terminal, type `claude`, follow the prompts.
+1. **Install Node.js** from [nodejs.org](https://nodejs.org) (the LTS button), and **sign in to Claude Code** once: open a terminal, type `claude`, follow the prompts. (For a login that does not lapse, run `claude setup-token` and save what it prints on the phone's Secrets page as `claude-oauth-token` - see [ENGINES.md](docs/ENGINES.md#a-saved-login-token).)
 2. **Install Tailscale** from [tailscale.com/download](https://tailscale.com/download) on the computer **and** the phone, and sign in to both with the same account. This is what lets your phone reach the computer privately, from anywhere.
 3. **Get Halyard.** Open a terminal and paste one line - on a Mac or Linux:
    `curl -fsSL https://raw.githubusercontent.com/jakoreilly/Halyard/main/scripts/install.sh | sh`
