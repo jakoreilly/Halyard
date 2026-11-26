@@ -64,6 +64,11 @@ const BUILTIN_ENGINES = {
     // longer resolves. Detected so the watcher can drop the id and retake the
     // turn fresh, rather than reporting a failure the phone cannot act on.
     staleSessionError: 'No conversation found with session ID',
+    // A year-long `claude setup-token` login, saved from the phone's /secrets page
+    // as <data>/secrets/claude-oauth-token, so runs do not depend on the interactive
+    // login that lapses. Absent or empty = the CLI's own stored login, as before.
+    // A saved token the API refuses is retried once on the stored login.
+    loginToken: { file: 'claude-oauth-token', env: 'CLAUDE_CODE_OAUTH_TOKEN' },
     supportsRelayHook: true,
   },
   copilot: {
@@ -147,7 +152,7 @@ const DEFAULTS = {
     // secret-egress: one command that reads a secret and talks to the network.
     // tainted-egress: any off-machine request once the run has read untrusted
     // content (the web, an MCP tool, an upload or a download).
-    rules: ['git', 'destructive-fs', 'network-egress', 'secret-egress', 'tainted-egress'],
+    rules: ['git', 'destructive-fs', 'env-dump', 'network-egress', 'secret-egress', 'tainted-egress'],
     // `gh pr merge` on a repo GitHub reports as PRIVATE passes with no tap. Off
     // by default: turn it on only if merging into your own private repos is
     // something you would approve without reading anyway.

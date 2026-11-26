@@ -267,9 +267,10 @@ function serviceInstalled(platform = process.platform, home = os.homedir(), { ru
 
 // --- the checks ------------------------------------------------------------------
 
-function agentSignedIn(engine, env = process.env, readCreds = usagemod.readCredentials) {
+function agentSignedIn(engine, env = process.env, readCreds = usagemod.readCredentials, secretsDir = null) {
   if (!engine || engine.stream !== 'claude-json') return { known: false };
   if (env.ANTHROPIC_API_KEY) return { known: true, ok: true, how: 'API key in the environment' };
+  if (Object.keys(require('./watcher').loginEnv(engine, secretsDir)).length) return { known: true, ok: true, how: 'saved setup-token login' };
   try {
     const c = readCreds();
     const o = (c && (c.claudeAiOauth || c.oauth)) || {};
@@ -291,7 +292,7 @@ function runChecks({ cfg, paths, health = null, env = process.env, run = default
 
   const engine = cfg.engines[cfg.defaultEngine];
   const r = resolveCommand(engine && engine.command);
-  const signed = r.command ? agentSignedIn(engine, env, readCreds) : { known: false };
+  const signed = r.command ? agentSignedIn(engine, env, readCreds, paths && paths.secrets) : { known: false };
   add('agent', `${(engine && engine.label) || cfg.defaultEngine} is installed${signed.known ? ' and signed in' : ''}`,
     r.command && (!signed.known || signed.ok),
     r.command ? (signed.known ? (signed.ok ? `${r.command} (${signed.how})` : `${r.command}, but not signed in`) : r.command) : r.problem,

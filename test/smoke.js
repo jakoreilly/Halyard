@@ -187,6 +187,24 @@ check('relay: recursion, not force, is what gates a delete', () => {
   assert.ok(!relay.shouldRelay('Bash', 'rm -f one-file.txt'));
 });
 
+check('relay: dumping the environment relays, since the saved login token lives in it', () => {
+  const rule = (cmd) => { const r = relay.matchRelayRule('Bash', cmd, {}, {}); return r && r.name; };
+  for (const cmd of [
+    'printenv', 'env', 'env | grep CLAUDE', 'ls; env', 'set', 'export -p', 'cat /proc/self/environ',
+    'Get-ChildItem env:', 'dir Env:', '$env:CLAUDE_CODE_OAUTH_TOKEN', 'echo $CLAUDE_CODE_OAUTH_TOKEN',
+    'echo ${ANTHROPIC_API_KEY}', '[Environment]::GetEnvironmentVariables()',
+    'node -e "console.log(process.env)"', 'python3 -c "import os;print(os.environ)"',
+    'bash -c "env"', 'sh -c env', "zsh -c 'printenv'", 'export', 'cd /tmp && export', 'cmd /c set',
+    'perl -e "print %ENV"', 'ruby -e "p ENV"', "awk 'BEGIN{for(k in ENVIRON)print k}'",
+  ]) assert.strictEqual(rule(cmd), 'env-dump', cmd);
+  for (const cmd of [
+    'echo $HOME', 'env FOO=1 node x.js', '$env:PATH', 'set -euo pipefail; ls',
+    'node -e "console.log(process.env.HOME)"', 'npm run env-check',
+    '$token = Get-Content token.txt', 'echo $token', '$apiKey = 1', 'export FOO=1', './env',
+    "python3 -c \"import os;print(os.environ.get('HOME'))\"", 'cp .env.example .env', 'source env/bin/activate',
+  ]) assert.strictEqual(rule(cmd), null, cmd);
+});
+
 check('relay: egress matches a flag written first', () => {
   // `curl\s` consumed the space the alternatives expect to find, so a flag in
   // front of the URL never matched while the same command with any other flag
@@ -1293,6 +1311,26 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(watcher.hookEnv({ cfg: on, paths: pathsmod.layout(os.tmpdir()) }).HALYARD_RELAY_PRIVATE_MERGE, '1');
   });
 
+  check('login token: read from secrets only for an engine that declares one, and a refused one is told apart', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'halyard-login-'));
+    const claude = configmod.load({ file: null, env: {}, cli: {} }).engines.claude;
+    const copilot = configmod.load({ file: null, env: {}, cli: {} }).engines.copilot;
+    assert.deepStrictEqual(watcher.loginEnv(claude, dir), {}, 'absent');
+    fs.writeFileSync(path.join(dir, 'claude-oauth-token'), '  \n');
+    assert.deepStrictEqual(watcher.loginEnv(claude, dir), {}, 'empty counts as absent');
+    fs.writeFileSync(path.join(dir, 'claude-oauth-token'), 'sk-ant-oat01-x\n');
+    assert.deepStrictEqual(watcher.loginEnv(claude, dir), { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-x' });
+    assert.deepStrictEqual(watcher.loginEnv(copilot, dir), {}, 'another CLI never inherits a Claude login');
+    assert.ok(setupmod.agentSignedIn(claude, {}, () => { throw new Error('none'); }, dir).ok, 'doctor counts the saved token');
+    const fail = (o) => ({ exitCode: 1, killed: false, timedOut: false, numTurns: null, reply: '', stderr: '', ...o });
+    assert.ok(watcher.isAuthFailure(fail({ stderr: 'API Error: 401 {"type":"authentication_error"}' })));
+    assert.ok(watcher.isAuthFailure(fail({ reply: 'OAuth token has expired. Please run /login' })));
+    assert.ok(!watcher.isAuthFailure(fail({ stderr: 'authentication_error', numTurns: 4 })), 'past its first turn it did authenticate');
+    assert.ok(!watcher.isAuthFailure(fail({ reply: `${'x'.repeat(500)} 401 Unauthorized` })), 'a long real reply quoting a 401 is not one');
+    assert.ok(!watcher.isAuthFailure(fail({ exitCode: 0, stderr: 'authentication_error' })));
+    assert.ok(!watcher.isAuthFailure(fail({ stderr: 'rate limit' })));
+  });
+
   // -------------------------------------------------------------------------
   // Needs your tap
 
@@ -1313,10 +1351,29 @@ await checkAsync('queue: push, peek, pop, and the pop is destructive', () => wit
     assert.strictEqual(rerun.status, 200);
     const queued = (await call('GET', '/api/inbox')).body.items[0];
     assert.ok(queued.message.includes('git push origin x') && queued.message.includes('/w'));
+    assert.strictEqual(queued.thread, 'reruns', 'its own thread, not a resume of main');
+    assert.strictEqual(queued.model, 'haiku', 'the small model');
     assert.strictEqual((await call('POST', '/api/missed/rerun', { id: ask.id })).status, 404);
     assert.strictEqual((await call('POST', '/api/missed/dismiss', { all: true })).body.remaining, 0);
     h = (await call('GET', '/api/health')).body;
     assert.strictEqual(h.missedTaps.length, 0);
+  }));
+
+  await checkAsync('quick route: a bare "status?" is answered without a run, anything with more to it is queued', () => withServer(async ({ call }) => {
+    for (const m of ['status?', 'Status', 'any update?', 'is it done?', "what's running"]) {
+      const r = (await call('POST', '/api/inbox', { message: m, thread: 'work' })).body;
+      assert.strictEqual(r.quick, 'status', m);
+    }
+    assert.strictEqual((await call('GET', '/api/inbox')).body.items.length, 0, 'nothing queued');
+    const reply = (await call('GET', '/api/health')).body;
+    assert.ok(reply.notifications >= 5);
+    for (const m of ['any update on the deploy?', "what's the status after the last run", 'status: repo']) {
+      assert.ok(!(await call('POST', '/api/inbox', { message: m })).body.quick, m);
+    }
+    assert.ok(!(await call('POST', '/api/inbox', { message: 'status?', runAfter: Date.now() + 60000 })).body.quick, 'scheduled goes to the agent');
+    assert.strictEqual((await call('GET', '/api/inbox')).body.items.length, 4);
+    const again = await call('POST', '/api/inbox', { message: 'status?', clientId: 'c1' });
+    assert.strictEqual((await call('POST', '/api/inbox', { message: 'status?', clientId: 'c1' })).body.id, again.body.id, 'a retried send is de-duped');
   }));
 
   // -------------------------------------------------------------------------
