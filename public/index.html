@@ -70,6 +70,52 @@
     --c-5: #a98be8; --c-6: #4fb6d8; --c-7: #d07fb0; --c-8: #9ab55a;
   }
 
+  /* Terminal: a coding-agent terminal look - monospace, near-black, one warm accent.
+     Contrast on --panel-2 #1E1E1E: ink 13.4:1, ink-2 8.0:1, sub 5.1:1, accent 5.9:1;
+     --on-accent on --accent 6.9:1. */
+  :root[data-theme="terminal"] {
+    color-scheme: dark;
+    --sans-face: var(--mono-face); --disp: var(--mono-face);
+    --r-sm: 4px; --r-md: 5px; --r-lg: 6px; --r-xl: 8px;
+    --bg: #0c0c0c; --surface: #141414; --panel-2: #1e1e1e; --panel-3: #262626;
+    --ink: #e6e6e6; --ink-2: #b4b4b4; --sub: #8e8e8e;
+    --line: #262626; --rule: #1e1e1e; --hair: #3a3a3a;
+    --accent: #e0805f; --on-accent: #0c0c0c; --accent-dim: rgba(224,128,95,.14);
+    --good: #52d18b; --watch: #e2b04e; --poor: #f0877c; --unknown: #8b98a5;
+    --shadow: 0 20px 50px -12px rgba(0,0,0,.8), 0 2px 8px rgba(0,0,0,.5);
+    --lift: none;
+    --glass: rgba(12,12,12,.9);
+    --seq-1: #173a59; --seq-2: #1d4a70; --seq-3: #245b88; --seq-4: #2c6da1;
+    --seq-5: #3a82bb; --seq-6: #4f98d2; --seq-7: #6fb0e4; --seq-8: #96c8f2;
+    --c-1: #6e8bef; --c-2: #e0a33e; --c-3: #35b98f; --c-4: #e0796f;
+    --c-5: #a98be8; --c-6: #4fb6d8; --c-7: #d07fb0; --c-8: #9ab55a;
+  }
+  :root[data-theme="terminal"] body { font-size: 14px; }
+  :root[data-theme="terminal"] section > h2 { text-transform: lowercase; }
+  :root[data-theme="terminal"] .conn, :root[data-theme="terminal"] .icon-btn,
+  :root[data-theme="terminal"] #send, :root[data-theme="terminal"] #ctx-chip,
+  :root[data-theme="terminal"] .compose .opts-btn { border-radius: var(--r-sm); }
+  :root[data-theme="terminal"] .compose .field { border-radius: var(--r-md); }
+  :root[data-theme="terminal"] button, :root[data-theme="terminal"] a.btn,
+  :root[data-theme="terminal"] .snip, :root[data-theme="terminal"] .chip { border-radius: var(--r-sm); }
+  #msg::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  :root[data-theme="terminal"] #msg { caret-color: var(--accent); }
+  /* Replies as terminal turns: "> what you sent", then "● the answer". */
+  :root[data-theme="terminal"] .reply {
+    background: transparent; border: 0; border-bottom: 1px solid var(--line);
+    border-radius: 0; padding: var(--s-3) 0; margin-bottom: 0;
+  }
+  :root[data-theme="terminal"] .reply.pinned { box-shadow: inset 2px 0 0 var(--accent); padding-left: var(--s-3); }
+  :root[data-theme="terminal"] .reply .prompt {
+    align-self: stretch; max-width: none; border-radius: var(--r-sm);
+    background: var(--panel-2); color: var(--ink-2); font-size: 13px;
+  }
+  :root[data-theme="terminal"] .reply .prompt::before { content: '> '; color: var(--sub); }
+  :root[data-theme="terminal"] .reply .text { position: relative; padding-left: 1.4em; }
+  /* U+25CF, not U+23FA: Android draws the record symbol as an emoji. */
+  :root[data-theme="terminal"] .reply .text::before { content: '\25CF'; position: absolute; left: .1em; top: 0; color: var(--accent); }
+  :root[data-theme="terminal"] .reply .acts { border-top: 0; padding-top: 0; }
+
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { scroll-padding-top: calc(var(--bar-h) + var(--s-3)); }
   html, body { margin: 0; background: var(--bg); color: var(--ink); }
@@ -172,15 +218,12 @@
     content: ""; position: absolute; left: -22px; top: 5px; width: 12px; height: 12px;
     border-radius: 50%; background: var(--bg); border: 2px solid var(--hair);
   }
-  #idle::before { border-color: var(--good) !important; }
   #run-box::before { background: var(--accent) !important; border-color: var(--accent) !important; animation: ping 1.8s var(--ease) infinite; }
   @keyframes ping { 0% { box-shadow: 0 0 0 0 var(--accent-dim); } 70%, 100% { box-shadow: 0 0 0 9px transparent; } }
 
   #ask::before { width: 14px !important; height: 14px !important; left: -23px !important; border: 0 !important; border-radius: 0 !important; background: var(--watch) !important; clip-path: polygon(0 0, 100% 50%, 0 100%); }
   #failed::before, #taps::before { background: var(--poor) !important; border-color: var(--poor) !important; border-radius: 2px !important; }
   #steps-box::before { top: 14px !important; width: 8px !important; height: 8px !important; left: -20px !important; }
-  #idle { display: flex; align-items: baseline; gap: var(--s-2); flex-wrap: wrap; min-height: 22px; }
-  #idle b { font: 600 14.5px/1.5 var(--disp); letter-spacing: .015em; }
 
   .row { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
   .grow { flex: 1; min-width: 0; }
@@ -361,7 +404,11 @@
   .compose select { font-size: 13px; padding: 7px 24px 7px 10px; background-color: var(--surface); }
   .snips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
   .snips::-webkit-scrollbar { display: none; }
-  .compose .snips { max-width: var(--measure); margin: 0 auto var(--s-2); }
+  .compose .ctx-line { max-width: var(--measure); margin: 0 auto var(--s-2); display: flex; gap: 6px; align-items: center; min-width: 0; }
+  .compose .ctx-line .snips { flex: 1; min-width: 0; }
+  #ctx-chip { flex: none; cursor: pointer; font: 500 12.5px/1 var(--disp); color: var(--sub); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 7px 10px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #ctx-chip.has { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  #thread-panel { max-width: var(--measure); margin: 0 auto var(--s-2); max-height: 45vh; overflow-y: auto; }
   .snip {
     flex: none; font-size: 12.5px; padding: 5px 11px; border-radius: 999px;
     border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); white-space: nowrap;
@@ -504,7 +551,7 @@
   }
 
   @media print {
-    :root, :root[data-theme="dark"], :root[data-theme="light"] {
+    :root, :root[data-theme="dark"], :root[data-theme="light"], :root[data-theme="terminal"] {
       --bg: #fff; --surface: #fff; --panel-2: #fff; --panel-3: #f2f2f0;
       --ink: #000; --ink-2: #222; --sub: #555;
       --line: #bbb; --rule: #ddd; --hair: #999;
@@ -517,7 +564,7 @@
       --c-5: #5a3f8f; --c-6: #125f79; --c-7: #8c3367; --c-8: #4f621b;
     }
     main { padding: 0; max-width: none; }
-    .toasts, .scrim, .tour, .topbar, .compose, .acts, #run-steer-row, #idle { display: none !important; }
+    .toasts, .scrim, .tour, .topbar, .compose, .acts, #run-steer-row { display: none !important; }
 
     .view { display: block !important; animation: none; }
     .view::before { content: attr(data-title); display: block; font: 600 12px var(--disp); color: #555; margin: 18px 0 6px; }
@@ -540,6 +587,7 @@
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
   <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7L14 5.5a3.5 3.5 0 0 1 5 5L10.5 19a2 2 0 0 1-3-3L15 8.5"/></symbol>
   <symbol id="i-find" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 10l3 2-3 2M12 15h5"/></symbol>
   <symbol id="i-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4v16M12 8l5.5-2M12 12h8M12 16l5.5 2" /></symbol>
   <symbol id="i-light" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></symbol>
   <symbol id="i-dark" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></symbol>
@@ -552,7 +600,7 @@
     <span class="sp"></span>
     <button class="ghost sm" id="outbox-btn" title="Messages parked while offline. Tap to send them now." hidden></button>
     <span class="conn" id="conn"><span class="dot"></span><span id="conn-text">connecting</span></span>
-    <button class="ghost icon-btn" id="theme-btn" title="Light, dark or follow the system"><svg class="ic"><use id="theme-ic" href="#i-auto"/></svg></button>
+    <button class="ghost icon-btn" id="theme-btn" title="Light, dark, terminal or follow the system"><svg class="ic"><use id="theme-ic" href="#i-auto"/></svg></button>
   </div>
   <div class="offline-bar" role="status">No connection to your computer. Anything you send is parked here and goes out by itself when the link is back.</div>
 
@@ -599,8 +647,6 @@
     </div>
   </section>
 
-  <section id="idle" class="hidden"><b>Standing by</b><span class="small muted" id="idle-text"></span></section>
-
   <section id="queue-box" class="hidden">
     <h2><span id="queue-title">Waiting</span></h2>
     <ul class="plain panel" id="queue" style="padding-top:4px;padding-bottom:4px"></ul>
@@ -646,15 +692,6 @@
 
   <section id="convo-box">
     <h2><span id="convo-title">Conversation</span><span class="sp grow"></span><button class="ghost sm" id="convo-all">All replies</button></h2>
-    <div class="panel thread-bar stack" style="margin-bottom:10px">
-      <div class="row">
-        <select class="grow" id="thread" aria-label="Thread"></select>
-        <button class="ghost sm" id="thread-new">New thread</button>
-        <button class="ghost sm" id="thread-clear" title="Forget what the agent carries forward in this thread">Clear context</button>
-      </div>
-      <div class="small muted" id="handover" title="Tap to show all of it"></div>
-      <div class="tiny muted mono" id="thread-ws" style="overflow-wrap:anywhere"></div>
-    </div>
     <div id="convo"></div>
   </section>
 </div>
@@ -804,7 +841,19 @@
     <div class="cmd hidden" id="dock-ask-cmd"></div>
     <div class="opts" id="dock-ask-opts"></div>
   </div>
-  <div class="snips" id="snips"></div>
+  <div class="panel thread-bar stack hidden" id="thread-panel">
+    <div class="row">
+      <select class="grow" id="thread" aria-label="Thread"></select>
+      <button class="ghost sm" id="thread-new">New thread</button>
+      <button class="ghost sm" id="thread-clear" title="Forget what the agent carries forward in this thread">Clear context</button>
+    </div>
+    <div class="small muted" id="handover" title="Tap to show all of it"></div>
+    <div class="tiny muted mono" id="thread-ws" style="overflow-wrap:anywhere"></div>
+  </div>
+  <div class="ctx-line">
+    <button type="button" class="chip" id="ctx-chip" aria-expanded="false" aria-controls="thread-panel" title="Thread and carried context"><span id="ctx-chip-text">main</span></button>
+    <div class="snips" id="snips"></div>
+  </div>
   <div class="inner field">
     <button class="ghost opts-btn" id="attach-btn" aria-label="Attach a file or photo" title="Attach a file or photo"><svg class="ic"><use href="#i-clip"/></svg></button>
     <input type="file" id="attach-file" class="hidden" aria-hidden="true" tabindex="-1">
@@ -979,7 +1028,7 @@
     });
   }
 
-  var THEMES = ['auto', 'light', 'dark'];
+  var THEMES = ['auto', 'light', 'dark', 'terminal'];
   function applyTheme(t) {
     if (t === 'auto') document.documentElement.removeAttribute('data-theme');
     else document.documentElement.setAttribute('data-theme', t);
@@ -1244,7 +1293,6 @@
     $('status-kv').innerHTML = kv.map(function (p) {
       return '<div class="' + (p[0] === 'workspace' ? 'wide' : '') + (p[1] === 'OFF' ? ' bad' : '') + '"><dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd></div>';
     }).join('');
-    $('idle-text').textContent = 'Nothing is running. ' + h.defaultEngine + ' picks up the next message you send.';
 
     renderRunBox(h.activeRun);
     renderFailed(h.lastFailed);
@@ -1271,13 +1319,11 @@
     var box = $('run-box');
     if (!run) {
       box.classList.add('hidden');
-      $('idle').classList.remove('hidden');
       $('run-draft').textContent = '';
       if (!pendingAsk) setBadge('now', '');
       return;
     }
     box.classList.remove('hidden');
-    $('idle').classList.add('hidden');
     if (!pendingAsk) setBadge('now', steps.length ? steps.length + ' steps' : 'run', 'live');
     $('run-what').textContent = run.thread + ' / ' + run.engine;
     $('run-msg').textContent = String(run.message || '').slice(0, 240);
@@ -1914,8 +1960,16 @@
         }
         sel.innerHTML = opts.join('');
         $('handover').textContent = r[1].exists ? r[1].text : 'No carried context in this thread yet.';
+        syncCtxChip(cur, r[1].exists);
         syncThreadWs();
       }).catch(function () {});
+  }
+  // The compose bar's chip: thread name, and whether it carries context forward.
+  function syncCtxChip(name, has) {
+    var open = !$('thread-panel').classList.contains('hidden');
+    $('ctx-chip-text').textContent = '# ' + name + ' · ' + (has ? 'context' : 'no context') + (open ? ' ▾' : ' ▸');
+    $('ctx-chip').classList.toggle('has', !!has);
+    $('ctx-chip').dataset.has = has ? '1' : '';
   }
   function syncThreadWs() {
     var map = (health && health.threadWorkspaces) || {}, cur = thread();
@@ -2364,6 +2418,11 @@
   $('thread').onchange = function () { LS.set('thread', this.value); pollContext(); renderConversation(); };
   $('convo-all').onclick = function () { setView('replies'); };
   $('handover').onclick = function () { this.classList.toggle('open'); };
+  $('ctx-chip').onclick = function () {
+    var open = $('thread-panel').classList.toggle('hidden') === false;
+    this.setAttribute('aria-expanded', String(open));
+    syncCtxChip(thread(), this.dataset.has === '1');
+  };
   $('taps-dismiss-all').onclick = function () {
     Promise.all(missedList.map(function (m) { return post('/api/missed/dismiss', { id: m.id }).catch(function () {}); }))
       .then(function () { missedTapsKey = null; pollHealth(); });
@@ -2688,7 +2747,7 @@
   var TOUR = [
     ['Message your computer', 'Type at the bottom and tap the arrow to send. The assistant on your computer does the work and its answer appears on Now and under Replies - even if you close this page.'],
     ['You stay in charge', 'Before anything risky - publishing code, deleting folders, sending data out - your phone asks Approve or Deny. Nothing happens until you tap. Missed one? It waits under "Needs your tap".'],
-    ['Keep going later', 'Threads keep separate conversations. Work holds files the assistant made, things scheduled for later, and what it has cost. System shows whether everything is healthy.']
+    ['Keep going later', 'Threads keep separate conversations - tap the # chip above the message box to switch, start one, or see what it carries forward. Work holds files the assistant made, things scheduled for later, and what it has cost. System shows whether everything is healthy.']
   ];
   var tourAt = 0;
   function showTour(i) {
