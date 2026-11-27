@@ -356,6 +356,16 @@
   .reply .acts.open .x { display: inline-block; }
   .reply .acts .destructive { color: var(--poor); }
   .reply.internal .text { color: var(--sub); }
+  /* The newest real reply in each list gets a faint old-gold ring, so it can
+     be found again after scrolling. Lists are newest-first, so this is the
+     first non-internal reply with none before it: pure CSS, follows new
+     arrivals and deletes. outline-offset follows the card's border-radius;
+     the margin keeps the ring from being clipped or touching its neighbour. */
+  #replies > .reply:not(.internal):not(.reply:not(.internal) ~ .reply),
+  #convo > .reply:not(.internal):not(.reply:not(.internal) ~ .reply) {
+    outline: 1.5px solid rgba(197, 165, 90, 0.45); outline-offset: 10px;
+    margin: 12px 12px 22px;
+  }
   .reply.pinned { box-shadow: inset 3px 0 0 var(--accent), var(--lift); }
   #pinned-head {
     all: unset; box-sizing: border-box; width: 100%; min-height: 32px; cursor: pointer;
