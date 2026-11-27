@@ -8,6 +8,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual trigger, so CI can be started by hand to check that Actions runs at
+  # all on this repo (it recorded zero runs from 12 Nov to 27 Nov 2026).
+  workflow_dispatch:
 
 jobs:
   test:
